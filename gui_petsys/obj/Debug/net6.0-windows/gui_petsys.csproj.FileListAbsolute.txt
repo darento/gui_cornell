@@ -1,0 +1,17 @@
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\bin\Debug\net6.0-windows\gui_petsys.exe
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\bin\Debug\net6.0-windows\gui_petsys.deps.json
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\bin\Debug\net6.0-windows\gui_petsys.runtimeconfig.json
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\bin\Debug\net6.0-windows\gui_petsys.dll
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\bin\Debug\net6.0-windows\gui_petsys.pdb
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.csproj.AssemblyReference.cache
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.Form1.resources
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.csproj.GenerateResource.cache
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.AssemblyInfoInputs.cache
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.AssemblyInfo.cs
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.csproj.CoreCompileInputs.cache
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.dll
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\refint\gui_petsys.dll
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.pdb
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\gui_petsys.genruntimeconfig.cache
+C:\Users\dsanchez\source\repos\gui_petsys\gui_petsys\obj\Debug\net6.0-windows\ref\gui_petsys.dll
