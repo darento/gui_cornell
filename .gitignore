@@ -1,0 +1,36 @@
+# Archivos de Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Salidas de compilación del proyecto (dentro de gui_petsys/)
+gui_petsys/bin/
+gui_petsys/obj/
+
+# Configuración personal
+*.log
+*.tlog
+*.dbmdl
+
+# Archivos de Python (por si hay scripts en el proyecto)
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Archivos de entorno
+env/
+.venv/
+*.env
+*.conda
+*.ipynb_checkpoints
+
+# Archivos del sistema
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Archivos temporales
+*.bak
+*.tmp
