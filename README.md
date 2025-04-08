@@ -1,74 +1,67 @@
-# gui_petsys
+# gui_cornell
 
-**A Windows Forms GUI built in C# to execute Python scripts from a desktop application.**
+**A Python-based GUI to manage PETsys commands for module validation.**
 
-This project serves as a lightweight interface between systems built in C# (e.g., for instrumentation or data acquisition) and Python scripts used for processing or analysis. It is especially useful in research or medical imaging contexts such as PET systems.
+This project provides a lightweight graphical interface built with Tkinter to simplify running PETsys commands. It was developed to bridge existing PETsys command-line workflows (such as data acquisition, conversion, and DAQD activation) with an easy-to-use GUI. This is particularly useful in research or instrumentation environments where quick, interactive control is desired.
 
 ---
 
 ## 🖥️ Features
 
-- Execute `.py` scripts directly from a GUI
-- Display the script's output in a multi-line textbox
-- Built in Visual Studio 2022 (.NET 6 or later)
-- Compatible with Anaconda or any Python 3.x installation
+- **Command Buttons:**  
+  Execute specific PETsys commands like:
+  - Activate DAQD
+  - Acquire Data
+  - Convert Raw Data to Coincidence Format
+  
+- **Configuration Management:**  
+  Choose the configuration file through a file dialog and display its current path.
+  
+- **Live Output Display:**  
+  View the command outputs (stdout and stderr) in a scrollable text area.
+
+- **Simple and Extendable:**  
+  Written in Python using Tkinter, allowing easy modifications and expansion.
 
 ---
 
 ## 🚀 How to Use
 
-1. **Clone the repository**:
+1. **Clone the repository:**
    ```bash
-   git clone https://github.com/darento/gui_petsys.git
-   ```
+   git clone https://github.com/darento/gui_cornell.git
 
-2. **Open the solution**:  
-   Open `gui_petsys.sln` in Visual Studio
+2. **Navigate to the project directory:**
+   cd gui_cornell
 
-3. **Set the path to your Python interpreter** in `Form1.cs`:
-   ```csharp
-   string pythonExe = @"C:\Path\To\python.exe";
-   ```
+3. **Install dependencies: If you have a requirements.txt, run:**
+   pip install -r requirements.txt
 
-4. **Run the application** and click the button to execute a Python script.
+4. **Run the application:**
+   python gui.py
 
----
+5. **Configure and use:**
+   - Choose the configuration file using the "Choose Config File" button.
+   - Use the dedicated buttons to execute PETsys commands.
 
-## 📁 Project Structure
+📁 Project Structure
+gui_cornell/
+├── src/
+│   └── gui.py                # Main GUI entry point
+├── .gitignore                 # Files and folders to ignore in Git
+├── README.md                  # Project documentation
+└── requirements.txt           # (Optional) Python dependencies
 
-```
-gui_petsys/
-├── gui_petsys.sln              # Visual Studio Solution
-├── gui_petsys/                 # Main project folder
-│   ├── Form1.cs                # Main GUI logic
-│   ├── Form1.Designer.cs       # Auto-generated UI layout
-│   └── Program.cs              # App entry point
-└── .gitignore                  # Ignored files and folders
-```
+🛠️ **Technologies**
+   - Python 3.x
+   - Tkinter (for the GUI)
+   - Standard libraries: subprocess, threading, etc.
 
----
+📜 **License:**
+   This project is licensed under the MIT License.
 
-## 🛠️ Technologies
+🧪 **Project Status:**
+   💡 Early-stage tool — open for expansion, additional features, and community contributions.
 
-- C# (.NET 6+)
-- Windows Forms
-- Python 3.x
-- Visual Studio 2022
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.
-
----
-
-## 🧪 Project Status
-
-💡 Early-stage tool — open for expansion, features and contributions.
-
----
-
-## 🙌 Author
-
-David Sanchez ([@darento](https://github.com/darento))
+🙌 **Author:**
+   David Sanchez (@darento)
