@@ -354,7 +354,10 @@ class PETsysGUIApp:
     def add_logo(self):
         # Add the onco_logo.jpeg image at the bottom of the GUI.
         try:
-            image = Image.open("/home/sie/sw/gui_cornell/imgs/onco_logo.jpeg")
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            image = Image.open(
+                os.path.join(current_dir, "..", "imgs", "onco_logo.jpeg")
+            )
             width, height = image.size
             new_width = 200
             new_height = int(height * new_width / width)
