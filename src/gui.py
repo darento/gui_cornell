@@ -853,7 +853,7 @@ class PETsysGUIApp:
         self.acquire_button.config(state=tk.NORMAL)
 
         # Show recommendation message
-        recommendation = "⚠️ RECOMMENDATION: Wait at least 2 minutes before acquiring data for system stabilization ⚠️"
+        recommendation = "⚠️ RECOMMENDATION: Wait at least 5 minutes before acquiring data for system stabilization ⚠️"
         self.log_message("\n" + recommendation + "\n")
 
         # Highlight the message by changing its appearance
