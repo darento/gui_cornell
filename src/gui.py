@@ -8,6 +8,9 @@ import signal
 from PIL import Image, ImageTk
 
 
+SPLIT_TIME_OFFSET = 0.1  # seconds
+
+
 def clean_tmp_and_shm():
     # Remove socket file if exists.
     if os.path.exists("/tmp/d.sock"):
@@ -24,6 +27,8 @@ class PETsysGUIApp:
 
         self.root = root
         root.title("MAGUI Cornell - PETsys Manager - LM file converter")
+        root.geometry("800x700")  # Set initial size
+        root.maxsize(1400, 900)  # Set maximum size
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Initialize variables
@@ -56,7 +61,7 @@ class PETsysGUIApp:
 
         ttk.Label(self.output_frame, text="Output Log:").pack(anchor="w")
         self.output_text = scrolledtext.ScrolledText(
-            self.output_frame, width=80, height=15
+            self.output_frame, width=80, height=5
         )
         self.output_text.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -121,7 +126,7 @@ class PETsysGUIApp:
         )
         self.config_entry = ttk.Entry(settings_frame, width=50)
         self.config_entry.grid(row=2, column=1, padx=5, pady=2)
-        ttk.Button(settings_frame, text="Choose", command=self.choose_config_file).grid(
+        ttk.Button(settings_frame, text="Browse", command=self.browse_config_file).grid(
             row=2, column=2, padx=5, pady=2
         )
 
@@ -168,7 +173,7 @@ class PETsysGUIApp:
         self.process_config_entry = ttk.Entry(proc_settings_frame2, width=50)
         self.process_config_entry.grid(row=1, column=1, padx=5, pady=2)
         ttk.Button(
-            proc_settings_frame2, text="Choose", command=self.choose_process_config_file
+            proc_settings_frame2, text="Browse", command=self.browse_process_config_file
         ).grid(row=1, column=2, padx=5, pady=2)
 
         # --- System Control Frame ---
@@ -354,21 +359,41 @@ class PETsysGUIApp:
     def add_logo(self):
         # Add the onco_logo.jpeg image at the bottom of the GUI.
         try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            image = Image.open(
-                os.path.join(current_dir, "..", "imgs", "onco_logo.jpeg")
-            )
+            # Try multiple possible paths
+            possible_paths = [
+                "imgs/onco_logo.jpeg",
+                "../imgs/onco_logo.jpeg",
+                "/home/sie/sw/gui_cornell/imgs/onco_logo.jpeg",
+            ]
+
+            image_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    image_path = path
+                    break
+
+            if image_path is None:
+                self.log_message("Logo file not found in any of the expected locations")
+                return
+
+            image = Image.open(image_path)
             width, height = image.size
-            new_width = 200
+            new_width = 150  # Made even smaller
             new_height = int(height * new_width / width)
             resized_image = image.resize((new_width, new_height), Image.LANCZOS)
             photo = ImageTk.PhotoImage(resized_image)
-            logo_label = tk.Label(self.root, image=photo)
+
+            # Create a frame specifically for the logo at the bottom
+            logo_frame = ttk.Frame(self.root)
+            logo_frame.pack(side=tk.BOTTOM, fill="x", pady=5)
+
+            logo_label = tk.Label(logo_frame, image=photo)
             # Keep a reference so the image is not garbage-collected.
             logo_label.image = photo
-            logo_label.pack(side=tk.BOTTOM, pady=10)
+            logo_label.pack()  # Pack in center of the frame
+
         except Exception as e:
-            print("Error loading onco_logo.jpeg:", e)
+            self.log_message(f"Error loading onco_logo.jpeg: {e}")
 
     # All the browse methods for file selection
     def browse_lm_input(self):
@@ -393,6 +418,7 @@ class PETsysGUIApp:
         filename = filedialog.askopenfilename(
             title="Select Rawf File",
             filetypes=[("Rawf Files", "*.rawf"), ("All Files", "*.*")],
+            initialdir=self.output_data_folder,
         )
         if filename:
             self.proc_data_entry.delete(0, tk.END)
@@ -414,13 +440,19 @@ class PETsysGUIApp:
             self.lm_output_entry.insert(0, folder)
 
     def browse_petsys_folder(self):
-        folder = filedialog.askdirectory(title="Select PETsys Folder")
+        folder = filedialog.askdirectory(
+            title="Select PETsys Folder", initialdir="/home/sie/sw/", mustexist=True
+        )
         if folder:
             self.petsys_entry.delete(0, tk.END)
             self.petsys_entry.insert(0, folder)
 
     def browse_output_folder(self):
-        folder = filedialog.askdirectory(title="Select Output Data Folder")
+        folder = filedialog.askdirectory(
+            title="Select Output Data Folder",
+            initialdir="/home/sie/Cornell/data/",
+            mustexist=True,
+        )
         if folder:
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, folder)
@@ -429,28 +461,44 @@ class PETsysGUIApp:
         filename = filedialog.askopenfilename(
             title="Select Basename LDAT File",
             filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
+            initialdir=self.output_data_folder,
         )
         if filename:
             self.ldat_basename_entry.delete(0, tk.END)
             self.ldat_basename_entry.insert(0, filename)
 
     def browse_process_petsys_folder(self):
-        folder = filedialog.askdirectory(title="Select Process PETSYS Folder")
+        folder = filedialog.askdirectory(
+            title="Select Process PETSYS Folder",
+            initialdir="/home/sie/sw/",
+            mustexist=True,
+        )
         if folder:
             self.process_petsys_entry.delete(0, tk.END)
             self.process_petsys_entry.insert(0, folder)
 
-    def choose_process_config_file(self):
+    def browse_process_config_file(self):
         filename = filedialog.askopenfilename(
             title="Select Processing Config File",
             filetypes=[
                 ("YAML Files", "*.yaml"),
                 ("All Files", "*.*"),
             ],
+            initialdir="/home/sie/sw/process_petsys/configs/",
         )
         if filename:
             self.process_config_entry.delete(0, tk.END)
             self.process_config_entry.insert(0, filename)
+
+    def browse_config_file(self):
+        filename = filedialog.askopenfilename(
+            title="Select Config File",
+            filetypes=[("INI Files", "*.ini"), ("All Files", "*.*")],
+            initialdir="/home/sie/Cornell/",
+        )
+        if filename:
+            self.config_entry.delete(0, tk.END)
+            self.config_entry.insert(0, filename)
 
     # Remaining methods (existing functionality)
     def on_close(self):
@@ -458,15 +506,6 @@ class PETsysGUIApp:
         self.stop_daqd()
         clean_tmp_and_shm()
         self.root.destroy()
-
-    def choose_config_file(self):
-        filename = filedialog.askopenfilename(
-            title="Select Config File",
-            filetypes=[("INI Files", "*.ini"), ("All Files", "*.*")],
-        )
-        if filename:
-            self.config_entry.delete(0, tk.END)
-            self.config_entry.insert(0, filename)
 
     def update_settings(self):
         self.petsys_folder = self.petsys_entry.get().strip()
@@ -680,7 +719,7 @@ class PETsysGUIApp:
         # the format of "rawf_file_basename_{acq_time}s"
         try:
             acq_time_str = file_full_path.split("_")[-1].replace("s", "")
-            acq_time_str = int(acq_time_str)
+            acq_time_str = int(acq_time_str) + SPLIT_TIME_OFFSET
         except ValueError:
             self.log_message(
                 "Error: Unable to extract acquisition time from the file name."
@@ -716,11 +755,13 @@ class PETsysGUIApp:
             self.output_data_folder, self.proc_data_entry.get()
         )
 
+        file_full_path = file_full_path.split(".")[0]
+
         # Read the acquisition time from the proc_data_entry which has
         # the format of "rawf_file_basename_{acq_time}s"
         try:
             acq_time_str = file_full_path.split("_")[-1].replace("s", "")
-            acq_time_str = int(acq_time_str)
+            acq_time_str = int(acq_time_str) + SPLIT_TIME_OFFSET
         except ValueError:
             self.log_message(
                 f"Error: Unable to extract acquisition time from the file name. Current file name is {file_full_path}"
