@@ -1,12 +1,18 @@
 import glob
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext, messagebox
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 import subprocess
 import threading
 import os
 import signal
 from PIL import Image, ImageTk
 
+# Set CustomTkinter appearance
+ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
+ctk.set_default_color_theme(
+    "dark-blue"
+)  # Themes: "blue" (standard), "green", "dark-blue"
 
 SPLIT_TIME_OFFSET = 0.1  # seconds
 
@@ -26,28 +32,28 @@ class PETsysGUIApp:
         clean_tmp_and_shm()
 
         self.root = root
-        root.title("MAGUI Cornell - PETsys Manager - LM file converter")
-        root.geometry("800x700")  # Set initial size
-        root.maxsize(1400, 900)  # Set maximum size
+        self.root.title("MAGUI Cornell - PETsys Manager - LM file converter")
+        self.root.geometry("900x900")  # Increased size slightly for CTk spacing
+        # self.root.maxsize(1400, 900) # Optional
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Initialize variables
         self.initialize_variables()
 
-        # Create notebook (tabbed interface)
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
+        # Create Tabview (replaces Notebook)
+        self.tabview = ctk.CTkTabview(root)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Create tabs
-        self.setup_tab = ttk.Frame(self.notebook)
-        self.rawf_to_ldat_tab = ttk.Frame(self.notebook)
-        self.ldat_proc_tab = ttk.Frame(self.notebook)
-        self.lm_generation_tab = ttk.Frame(self.notebook)
+        self.tabview.add("System Setup & Acquisition")
+        self.tabview.add("RAWF to LDAT Conversion")
+        self.tabview.add("LDAT Processing")
+        self.tabview.add("LM File Generation")
 
-        self.notebook.add(self.setup_tab, text="System Setup & Acquisition")
-        self.notebook.add(self.rawf_to_ldat_tab, text="RAWF to LDAT Conversion")
-        self.notebook.add(self.ldat_proc_tab, text="LDAT Processing")
-        self.notebook.add(self.lm_generation_tab, text="LM File Generation")
+        self.setup_tab = self.tabview.tab("System Setup & Acquisition")
+        self.rawf_to_ldat_tab = self.tabview.tab("RAWF to LDAT Conversion")
+        self.ldat_proc_tab = self.tabview.tab("LDAT Processing")
+        self.lm_generation_tab = self.tabview.tab("LM File Generation")
 
         # Populate tabs
         self.setup_acquisition_tab()
@@ -56,13 +62,13 @@ class PETsysGUIApp:
         self.setup_lm_generation_tab()
 
         # Common output text area (shared across tabs)
-        self.output_frame = ttk.Frame(root)
+        self.output_frame = ctk.CTkFrame(root)
         self.output_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        ttk.Label(self.output_frame, text="Output Log:").pack(anchor="w")
-        self.output_text = scrolledtext.ScrolledText(
-            self.output_frame, width=80, height=5
+        ctk.CTkLabel(self.output_frame, text="Output Log:").pack(
+            anchor="w", padx=5, pady=(5, 0)
         )
+        self.output_text = ctk.CTkTextbox(self.output_frame, width=800, height=150)
         self.output_text.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Add the logo at the bottom
@@ -70,7 +76,7 @@ class PETsysGUIApp:
 
     def log_message(self, message):
         self.output_text.insert(tk.END, message + "\n")
-        self.output_text.yview_moveto(1.0)  # force scroll to the bottom
+        self.output_text.see(tk.END)  # force scroll to the bottom
 
     def initialize_variables(self):
         # Common parameters
@@ -93,263 +99,286 @@ class PETsysGUIApp:
         self.lm_calibration_file = ""
         self.lm_output_file = ""
 
+    def create_labeled_frame(self, parent, title):
+        frame = ctk.CTkFrame(parent)
+        label = ctk.CTkLabel(
+            frame, text=title, font=ctk.CTkFont(size=14, weight="bold")
+        )
+        label.grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(5, 0))
+        return frame
+
     def setup_acquisition_tab(self):
         # --- Settings Frame ---
-        settings_frame = ttk.LabelFrame(
-            self.setup_tab, text="Settings", padding=(10, 5)
-        )
+        settings_frame = self.create_labeled_frame(self.setup_tab, "Settings")
         settings_frame.pack(padx=10, pady=5, fill="x")
 
-        # PETsys Folder
-        ttk.Label(settings_frame, text="PETsys Folder:").grid(
-            row=0, column=0, sticky="e", padx=5, pady=2
-        )
-        self.petsys_entry = ttk.Entry(settings_frame, width=50)
-        self.petsys_entry.grid(row=0, column=1, padx=5, pady=2)
-        ttk.Button(
-            settings_frame, text="Browse", command=self.browse_petsys_folder
-        ).grid(row=0, column=2, padx=5, pady=2)
+        # Grid configuration for settings_frame
+        settings_frame.grid_columnconfigure(1, weight=1)
 
-        # Output Data Folder
-        ttk.Label(settings_frame, text="Output Data Folder:").grid(
+        # PETsys Folder
+        ctk.CTkLabel(settings_frame, text="PETsys Folder:").grid(
             row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.output_entry = ttk.Entry(settings_frame, width=50)
-        self.output_entry.grid(row=1, column=1, padx=5, pady=2)
-        ttk.Button(
-            settings_frame, text="Browse", command=self.browse_output_folder
+        self.petsys_entry = ctk.CTkEntry(settings_frame)
+        self.petsys_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            settings_frame, text="Browse", command=self.browse_petsys_folder, width=100
         ).grid(row=1, column=2, padx=5, pady=2)
 
-        # Config File
-        ttk.Label(settings_frame, text="Config File:").grid(
+        # Output Data Folder
+        ctk.CTkLabel(settings_frame, text="Output Data Folder:").grid(
             row=2, column=0, sticky="e", padx=5, pady=2
         )
-        self.config_entry = ttk.Entry(settings_frame, width=50)
-        self.config_entry.grid(row=2, column=1, padx=5, pady=2)
-        ttk.Button(settings_frame, text="Browse", command=self.browse_config_file).grid(
-            row=2, column=2, padx=5, pady=2
-        )
+        self.output_entry = ctk.CTkEntry(settings_frame)
+        self.output_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            settings_frame, text="Browse", command=self.browse_output_folder, width=100
+        ).grid(row=2, column=2, padx=5, pady=2)
 
-        # Acquisition file name
-        ttk.Label(settings_frame, text="Acquisition File Name:").grid(
+        # Config File
+        ctk.CTkLabel(settings_frame, text="Config File:").grid(
             row=3, column=0, sticky="e", padx=5, pady=2
         )
-        self.acq_file_entry = ttk.Entry(settings_frame, width=50)
-        self.acq_file_entry.grid(row=3, column=1, padx=5, pady=2)
+        self.config_entry = ctk.CTkEntry(settings_frame)
+        self.config_entry.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            settings_frame, text="Browse", command=self.browse_config_file, width=100
+        ).grid(row=3, column=2, padx=5, pady=2)
+
+        # Acquisition file name
+        ctk.CTkLabel(settings_frame, text="Acquisition File Name:").grid(
+            row=4, column=0, sticky="e", padx=5, pady=2
+        )
+        self.acq_file_entry = ctk.CTkEntry(settings_frame)
+        self.acq_file_entry.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
         self.acq_file_entry.insert(0, "data_file")
 
         # Acquisition Time
-        ttk.Label(settings_frame, text="Acq. Time (s):").grid(
-            row=4, column=0, sticky="e", padx=5, pady=2
+        ctk.CTkLabel(settings_frame, text="Acq. Time (s):").grid(
+            row=5, column=0, sticky="e", padx=5, pady=2
         )
-        self.acq_entry = ttk.Entry(settings_frame, width=10)
-        self.acq_entry.grid(row=4, column=1, sticky="w", padx=5, pady=2)
+        self.acq_entry = ctk.CTkEntry(settings_frame, width=100)
+        self.acq_entry.grid(row=5, column=1, sticky="w", padx=5, pady=2)
         self.acq_entry.insert(0, "10")
 
         # --- Processing Settings for PETSYS Scripts ---
-        proc_settings_frame2 = ttk.LabelFrame(
-            settings_frame, text="Process LDAT files Settings", padding=(10, 5)
+        proc_settings_frame2 = self.create_labeled_frame(
+            settings_frame, "Process LDAT files Settings"
         )
         proc_settings_frame2.grid(
-            row=5, column=0, columnspan=3, padx=5, pady=5, sticky="ew"
+            row=6, column=0, columnspan=3, padx=5, pady=10, sticky="ew"
         )
+        proc_settings_frame2.grid_columnconfigure(1, weight=1)
 
         # Process PETSYS Folder
-        ttk.Label(proc_settings_frame2, text="'process_petsys' sw Folder:").grid(
-            row=0, column=0, sticky="e", padx=5, pady=2
+        ctk.CTkLabel(proc_settings_frame2, text="'process_petsys' sw Folder:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.process_petsys_entry = ttk.Entry(proc_settings_frame2, width=50)
-        self.process_petsys_entry.grid(row=0, column=1, padx=5, pady=2)
-        ttk.Button(
+        self.process_petsys_entry = ctk.CTkEntry(proc_settings_frame2)
+        self.process_petsys_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
             proc_settings_frame2,
             text="Browse",
             command=self.browse_process_petsys_folder,
-        ).grid(row=0, column=2, padx=5, pady=2)
-
-        # Processing Config File
-        ttk.Label(proc_settings_frame2, text="YAML Config File:").grid(
-            row=1, column=0, sticky="e", padx=5, pady=2
-        )
-        self.process_config_entry = ttk.Entry(proc_settings_frame2, width=50)
-        self.process_config_entry.grid(row=1, column=1, padx=5, pady=2)
-        ttk.Button(
-            proc_settings_frame2, text="Browse", command=self.browse_process_config_file
+            width=100,
         ).grid(row=1, column=2, padx=5, pady=2)
 
-        # --- System Control Frame ---
-        control_frame = ttk.LabelFrame(
-            self.setup_tab, text="System Control", padding=(10, 5)
+        # Processing Config File
+        ctk.CTkLabel(proc_settings_frame2, text="YAML Config File:").grid(
+            row=2, column=0, sticky="e", padx=5, pady=2
         )
+        self.process_config_entry = ctk.CTkEntry(proc_settings_frame2)
+        self.process_config_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            proc_settings_frame2,
+            text="Browse",
+            command=self.browse_process_config_file,
+            width=100,
+        ).grid(row=2, column=2, padx=5, pady=2)
+
+        # --- System Control Frame ---
+        control_frame = self.create_labeled_frame(self.setup_tab, "System Control")
         control_frame.pack(padx=10, pady=5, fill="x")
 
         # DAQD Toggle
         self.daqd_state = tk.BooleanVar(value=False)
-        self.daqd_toggle = ttk.Checkbutton(
+        self.daqd_toggle = ctk.CTkCheckBox(
             control_frame,
             text="DAQD OFF",
             variable=self.daqd_state,
             command=self.toggle_daqd,
+            onvalue=True,
+            offvalue=False,
         )
-        self.daqd_toggle.grid(row=0, column=0, padx=5, pady=5)
+        self.daqd_toggle.grid(row=1, column=0, padx=20, pady=10)
 
         # System Initialization
-        self.init_system_button = ttk.Button(
+        self.init_system_button = ctk.CTkButton(
             control_frame, text="Initialize System", command=self.init_system
         )
-        self.init_system_button.grid(row=0, column=1, padx=5, pady=5)
+        self.init_system_button.grid(row=1, column=1, padx=20, pady=10)
 
         # --- Acquisition Frame ---
-        acq_frame = ttk.LabelFrame(
-            self.setup_tab, text="Data Acquisition", padding=(10, 5)
-        )
+        acq_frame = self.create_labeled_frame(self.setup_tab, "Data Acquisition")
         acq_frame.pack(padx=10, pady=5, fill="x")
-
-        # Acquire button
-        self.acquire_button = ttk.Button(
-            acq_frame, text="Acquire Data", command=self.acquire_data
-        )
-        self.acquire_button.grid(row=0, column=1, padx=5, pady=5)
-        self.acquire_button.config(state=tk.DISABLED)
 
         # Hardware Trigger flag (checkbutton)
         self.hw_trigger = tk.BooleanVar(value=False)
-        self.hw_trigger_cb = ttk.Checkbutton(
-            acq_frame, text="Enable Hardware Trigger", variable=self.hw_trigger
+        self.hw_trigger_cb = ctk.CTkCheckBox(
+            acq_frame,
+            text="Enable Hardware Trigger",
+            variable=self.hw_trigger,
+            onvalue=True,
+            offvalue=False,
         )
-        self.hw_trigger_cb.grid(row=0, column=0, padx=5, pady=5)
+        self.hw_trigger_cb.grid(row=1, column=0, padx=20, pady=10)
+
+        # Acquire button
+        self.acquire_button = ctk.CTkButton(
+            acq_frame, text="Acquire Data", command=self.acquire_data, state="disabled"
+        )
+        self.acquire_button.grid(row=1, column=1, padx=20, pady=10)
 
     def setup_rawf_to_ldat_tab(self):
         # --- Data File Selection for Processing ---
-        proc_file_frame = ttk.LabelFrame(
-            self.rawf_to_ldat_tab, text="Data File Selection", padding=(10, 5)
+        proc_file_frame = self.create_labeled_frame(
+            self.rawf_to_ldat_tab, "Data File Selection"
         )
         proc_file_frame.pack(padx=10, pady=5, fill="x")
-        ttk.Label(proc_file_frame, text="Data File:").grid(
-            row=0, column=0, sticky="e", padx=5, pady=2
+        proc_file_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(proc_file_frame, text="Data File:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.proc_data_entry = ttk.Entry(proc_file_frame, width=50)
-        self.proc_data_entry.grid(row=0, column=1, padx=5, pady=2)
+        self.proc_data_entry = ctk.CTkEntry(proc_file_frame)
+        self.proc_data_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
         # Set default to acquisition file
         if not self.proc_data_entry.get().strip():
             self.proc_data_entry.insert(0, "rawf_file_basename")
-        ttk.Button(proc_file_frame, text="Browse", command=self.browse_rawf_file).grid(
-            row=0, column=2, padx=5, pady=2
-        )
+        ctk.CTkButton(
+            proc_file_frame, text="Browse", command=self.browse_rawf_file, width=100
+        ).grid(row=1, column=2, padx=5, pady=2)
 
         # --- Processing Settings Frame ---
-        proc_settings_frame = ttk.LabelFrame(
-            self.rawf_to_ldat_tab, text="Processing Settings", padding=(10, 5)
+        proc_settings_frame = self.create_labeled_frame(
+            self.rawf_to_ldat_tab, "Processing Settings"
         )
         proc_settings_frame.pack(padx=10, pady=5, fill="x")
 
         # Number of Split Files
-        ttk.Label(proc_settings_frame, text="Number of Split Files:").grid(
-            row=0, column=0, sticky="e", padx=5, pady=2
+        ctk.CTkLabel(proc_settings_frame, text="Number of Split Files:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.split_entry = ttk.Entry(proc_settings_frame, width=10)
-        self.split_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        self.split_entry = ctk.CTkEntry(proc_settings_frame, width=100)
+        self.split_entry.grid(row=1, column=1, sticky="w", padx=5, pady=2)
         self.split_entry.insert(0, "1")
 
         # --- Conversion Buttons Frame ---
-        conversion_frame = ttk.LabelFrame(
-            self.rawf_to_ldat_tab, text="Conversion Options", padding=(10, 5)
+        conversion_frame = self.create_labeled_frame(
+            self.rawf_to_ldat_tab, "Conversion Options"
         )
         conversion_frame.pack(padx=10, pady=5, fill="x")
 
         # Convert buttons
-        self.convert_to_coincidence_button = ttk.Button(
+        self.convert_to_coincidence_button = ctk.CTkButton(
             conversion_frame,
             text="Convert Raw to Coincidence",
             command=self.convert_raw_to_coincidence,
         )
-        self.convert_to_coincidence_button.grid(row=0, column=0, padx=5, pady=5)
+        self.convert_to_coincidence_button.grid(row=1, column=0, padx=20, pady=10)
 
-        self.convert_to_group_button = ttk.Button(
+        self.convert_to_group_button = ctk.CTkButton(
             conversion_frame,
             text="Convert Raw to Group",
             command=self.convert_raw_to_group,
         )
-        self.convert_to_group_button.grid(row=0, column=1, padx=5, pady=5)
+        self.convert_to_group_button.grid(row=1, column=1, padx=20, pady=10)
 
     def setup_ldat_proc_tab(self):
         # --- Energy cal file generation Section ---
-        proc_frame = ttk.LabelFrame(
-            self.ldat_proc_tab, text="Energy cal file generation", padding=(10, 5)
+        proc_frame = self.create_labeled_frame(
+            self.ldat_proc_tab, "Energy cal file generation"
         )
         proc_frame.pack(padx=10, pady=5, fill="x")
+        proc_frame.grid_columnconfigure(1, weight=1)
 
         # Label and entry for Basename LDAT File selection
-        ttk.Label(proc_frame, text="Basename LDAT File:").grid(
-            row=0, column=0, sticky="e", padx=5, pady=2
+        ctk.CTkLabel(proc_frame, text="Basename LDAT File:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.ldat_basename_entry = ttk.Entry(proc_frame, width=50)
-        self.ldat_basename_entry.grid(row=0, column=1, padx=5, pady=2)
-        ttk.Button(proc_frame, text="Browse", command=self.browse_ldat_basename).grid(
-            row=0, column=2, padx=5, pady=2
-        )
+        self.ldat_basename_entry = ctk.CTkEntry(proc_frame)
+        self.ldat_basename_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            proc_frame, text="Browse", command=self.browse_ldat_basename, width=100
+        ).grid(row=1, column=2, padx=5, pady=2)
 
         # Button to launch the energy cal generation python script
-        self.process_ldat_button = ttk.Button(
+        self.process_ldat_button = ctk.CTkButton(
             proc_frame,
             text="Create Energy cal file",
             command=self.generate_energy_cal_file,
         )
-        self.process_ldat_button.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+        self.process_ldat_button.grid(row=2, column=0, columnspan=3, padx=20, pady=10)
 
     def setup_lm_generation_tab(self):
         # --- LM Generation Settings Frame ---
-        lm_settings_frame = ttk.LabelFrame(
-            self.lm_generation_tab, text="LM File Generation Settings", padding=(10, 5)
+        lm_settings_frame = self.create_labeled_frame(
+            self.lm_generation_tab, "LM File Generation Settings"
         )
         lm_settings_frame.pack(padx=10, pady=5, fill="x")
+        lm_settings_frame.grid_columnconfigure(1, weight=1)
+
         # Input LDAT file (default is the acquisition file)
-        ttk.Label(lm_settings_frame, text="Input LDAT File:").grid(
-            row=0, column=0, sticky="e", padx=5, pady=2
+        ctk.CTkLabel(lm_settings_frame, text="Input LDAT File:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.lm_input_entry = ttk.Entry(lm_settings_frame, width=50)
-        self.lm_input_entry.grid(row=0, column=1, padx=5, pady=2)
+        self.lm_input_entry = ctk.CTkEntry(lm_settings_frame)
+        self.lm_input_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
         # Set default to acquisition file if empty
         if not self.lm_input_entry.get().strip():
             self.lm_input_entry.insert(0, "ldat_file_basename")
-        ttk.Button(lm_settings_frame, text="Browse", command=self.browse_lm_input).grid(
-            row=0, column=2, padx=5, pady=2
-        )
+        ctk.CTkButton(
+            lm_settings_frame, text="Browse", command=self.browse_lm_input, width=100
+        ).grid(row=1, column=2, padx=5, pady=2)
 
         # LM Configuration file
-        ttk.Label(lm_settings_frame, text="System Energy cal file:").grid(
-            row=1, column=0, sticky="e", padx=5, pady=2
-        )
-        self.lm_encal_entry = ttk.Entry(lm_settings_frame, width=50)
-        self.lm_encal_entry.grid(row=1, column=1, padx=5, pady=2)
-        ttk.Button(lm_settings_frame, text="Browse", command=self.browse_lm_encal).grid(
-            row=1, column=2, padx=5, pady=2
-        )
-
-        # Calibration file
-        ttk.Label(lm_settings_frame, text="Calibration File:").grid(
+        ctk.CTkLabel(lm_settings_frame, text="System Energy cal file:").grid(
             row=2, column=0, sticky="e", padx=5, pady=2
         )
-        self.lm_calib_entry = ttk.Entry(lm_settings_frame, width=50)
-        self.lm_calib_entry.grid(row=2, column=1, padx=5, pady=2)
-        ttk.Button(lm_settings_frame, text="Browse", command=self.browse_lm_calib).grid(
-            row=2, column=2, padx=5, pady=2
-        )
+        self.lm_encal_entry = ctk.CTkEntry(lm_settings_frame)
+        self.lm_encal_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            lm_settings_frame, text="Browse", command=self.browse_lm_encal, width=100
+        ).grid(row=2, column=2, padx=5, pady=2)
 
-        # Output LM file
-        ttk.Label(lm_settings_frame, text="Output LM Folder:").grid(
+        # Calibration file
+        ctk.CTkLabel(lm_settings_frame, text="Calibration File:").grid(
             row=3, column=0, sticky="e", padx=5, pady=2
         )
-        self.lm_output_entry = ttk.Entry(lm_settings_frame, width=50)
-        self.lm_output_entry.grid(row=3, column=1, padx=5, pady=2)
-        ttk.Button(
-            lm_settings_frame, text="Set Output", command=self.browse_lm_output_folder
+        self.lm_calib_entry = ctk.CTkEntry(lm_settings_frame)
+        self.lm_calib_entry.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            lm_settings_frame, text="Browse", command=self.browse_lm_calib, width=100
         ).grid(row=3, column=2, padx=5, pady=2)
 
+        # Output LM file
+        ctk.CTkLabel(lm_settings_frame, text="Output LM Folder:").grid(
+            row=4, column=0, sticky="e", padx=5, pady=2
+        )
+        self.lm_output_entry = ctk.CTkEntry(lm_settings_frame)
+        self.lm_output_entry.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            lm_settings_frame,
+            text="Set Output",
+            command=self.browse_lm_output_folder,
+            width=100,
+        ).grid(row=4, column=2, padx=5, pady=2)
+
         # Generate button
-        generate_frame = ttk.Frame(self.lm_generation_tab)
+        generate_frame = ctk.CTkFrame(self.lm_generation_tab, fg_color="transparent")
         generate_frame.pack(padx=10, pady=10)
 
-        self.generate_lm_button = ttk.Button(
+        self.generate_lm_button = ctk.CTkButton(
             generate_frame,
             text="Generate LM File",
             command=self.generate_lm_file,
@@ -376,20 +405,22 @@ class PETsysGUIApp:
                 self.log_message("Logo file not found in any of the expected locations")
                 return
 
+            # Use CTkImage for better scaling
             image = Image.open(image_path)
             width, height = image.size
-            new_width = 150  # Made even smaller
+            new_width = 150
             new_height = int(height * new_width / width)
-            resized_image = image.resize((new_width, new_height), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(resized_image)
+
+            # CTkImage requires size argument
+            ctk_image = ctk.CTkImage(
+                light_image=image, dark_image=image, size=(new_width, new_height)
+            )
 
             # Create a frame specifically for the logo at the bottom
-            logo_frame = ttk.Frame(self.root)
+            logo_frame = ctk.CTkFrame(self.root, fg_color="transparent")
             logo_frame.pack(side=tk.BOTTOM, fill="x", pady=5)
 
-            logo_label = tk.Label(logo_frame, image=photo)
-            # Keep a reference so the image is not garbage-collected.
-            logo_label.image = photo
+            logo_label = ctk.CTkLabel(logo_frame, image=ctk_image, text="")
             logo_label.pack()  # Pack in center of the frame
 
         except Exception as e:
@@ -574,7 +605,7 @@ class PETsysGUIApp:
             self.root.after(
                 0, lambda: self.output_text.insert(tk.END, full_output + "\n")
             )
-            self.root.after(0, lambda: self.output_text.yview_moveto(1.0))
+            self.root.after(0, lambda: self.output_text.see(tk.END))
             if callback:
                 self.root.after(0, callback)
 
@@ -583,39 +614,38 @@ class PETsysGUIApp:
     def toggle_daqd(self):
         if self.daqd_state.get():
             # Toggle turned on: update text and launch DAQD window
-            self.daqd_toggle.config(text="DAQD ON")
+            self.daqd_toggle.configure(text="DAQD ON")
             self.init_daqd_window()
         else:
             # Toggle turned off: update text and stop DAQD process and close window
-            self.daqd_toggle.config(text="DAQD OFF")
+            self.daqd_toggle.configure(text="DAQD OFF")
             self.stop_daqd()
             if hasattr(self, "daqd_window") and self.daqd_window.winfo_exists():
                 self.daqd_window.destroy()
 
             # Reset initialization state and disable acquire button when DAQD is turned off
             self.system_initialized = False
-            self.acquire_button.config(state=tk.DISABLED)
+            self.acquire_button.configure(state="disabled")
 
     def init_daqd_window(self):
         # Create DAQD window only if it doesn't already exist.
         if hasattr(self, "daqd_window") and self.daqd_window.winfo_exists():
             return
-        self.daqd_window = tk.Toplevel(self.root)
+        self.daqd_window = ctk.CTkToplevel(self.root)
         self.daqd_window.title("DAQD Initialization")
-        self.daqd_window.geometry("500x300")
+        self.daqd_window.geometry("600x400")
         # Make sure that closing the window updates the toggle.
         self.daqd_window.protocol("WM_DELETE_WINDOW", self.close_daqd_window)
-        self.daqd_output = scrolledtext.ScrolledText(
-            self.daqd_window, width=60, height=15
-        )
-        self.daqd_output.pack(padx=10, pady=10)
+        self.daqd_output = ctk.CTkTextbox(self.daqd_window, width=580, height=380)
+        self.daqd_output.pack(padx=10, pady=10, fill="both", expand=True)
         # Start DAQD in a background thread.
         threading.Thread(target=self.start_daqd, daemon=True).start()
 
     def close_daqd_window(self):
         # Called when the DAQD window is closed manually.
         self.daqd_state.set(False)
-        self.daqd_toggle.config(text="DAQD OFF")
+        self.daqd_toggle.configure(text="DAQD OFF")
+        self.daqd_toggle.deselect()  # Ensure visual state matches
         self.stop_daqd()
         self.daqd_window.destroy()
 
@@ -655,7 +685,8 @@ class PETsysGUIApp:
             self.daqd_process = None
             # Reset the toggle if the process ended unexpectedly.
             self.root.after(0, lambda: self.daqd_state.set(False))
-            self.root.after(0, lambda: self.daqd_toggle.config(text="DAQD OFF"))
+            self.root.after(0, lambda: self.daqd_toggle.configure(text="DAQD OFF"))
+            self.root.after(0, lambda: self.daqd_toggle.deselect())
 
     def stop_daqd(self):
         if self.daqd_process and self.daqd_process.poll() is None:
@@ -891,25 +922,33 @@ class PETsysGUIApp:
 
     def after_init(self):
         self.system_initialized = True
-        self.acquire_button.config(state=tk.NORMAL)
+        self.acquire_button.configure(state="normal")
 
         # Show recommendation message
         recommendation = "⚠️ RECOMMENDATION: Wait at least 5 minutes before acquiring data for system stabilization ⚠️"
         self.log_message("\n" + recommendation + "\n")
 
         # Highlight the message by changing its appearance
-        self.output_text.tag_configure(
-            "warning", foreground="red", font=("Helvetica", 10, "bold")
-        )
+        # CTkTextbox does not support tag_configure in the same way as tk.Text easily for colors without internal access
+        # But we can try using standard tkinter tags if CTkTextbox exposes the underlying widget or supports it.
+        # CTkTextbox is a wrapper around tk.Text.
+        # We can access the underlying text widget via self.output_text._textbox
 
-        # Find the position of the message and tag it
-        start_pos = self.output_text.search(recommendation, "1.0", tk.END)
-        if start_pos:
-            line_end = start_pos + " lineend"
-            self.output_text.tag_add("warning", start_pos, line_end)
+        try:
+            self.output_text._textbox.tag_configure(
+                "warning", foreground="red", font=("Helvetica", 10, "bold")
+            )
+
+            # Find the position of the message and tag it
+            start_pos = self.output_text._textbox.search(recommendation, "1.0", tk.END)
+            if start_pos:
+                line_end = start_pos + " lineend"
+                self.output_text._textbox.tag_add("warning", start_pos, line_end)
+        except Exception:
+            pass  # If internal API changes, just ignore highlighting
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     app = PETsysGUIApp(root)
     root.mainloop()
