@@ -13,6 +13,8 @@ ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme(
     "dark-blue"
 )  # Themes: "blue" (standard), "green", "dark-blue"
+# Force polygon-based drawing instead of font-based
+ctk.DrawEngine.preferred_drawing_method = "polygon_shapes"
 
 SPLIT_TIME_OFFSET = 0.1  # seconds
 
