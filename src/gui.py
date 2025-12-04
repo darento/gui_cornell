@@ -246,7 +246,7 @@ class PETsysGUIApp:
 
         # --- Complete Pipeline Frame (Fancy Automation Button) ---
         pipeline_frame = self.create_labeled_frame(
-            right_column, "🚀 Complete Automated Pipeline"
+            right_column, "Complete Automated Pipeline"
         )
         pipeline_frame.pack(padx=10, pady=5, fill="both", expand=True)
 
@@ -266,7 +266,7 @@ class PETsysGUIApp:
         # Big fancy pipeline button
         self.pipeline_button = ctk.CTkButton(
             pipeline_frame,
-            text="▶ RUN COMPLETE PIPELINE",
+            text="> RUN COMPLETE PIPELINE",
             command=self.run_complete_pipeline,
             font=ctk.CTkFont(size=16, weight="bold"),
             height=50,
@@ -519,7 +519,7 @@ class PETsysGUIApp:
     def browse_output_folder(self) -> None:
         folder = filedialog.askdirectory(
             title="Select Output Data Folder",
-            initialdir="/home/sie/Cornell/data/",
+            initialdir="/data/nvmDisk/Cornell/",
             mustexist=True,
         )
         if folder:
@@ -951,7 +951,7 @@ class PETsysGUIApp:
             ]
         ):
             self.log_message(
-                "⚠️ ERROR: Please configure all required settings before running the pipeline!"
+                "[WARNING] ERROR: Please configure all required settings before running the pipeline!"
             )
             self.log_message(
                 "   Required: PETsys Folder, Output Data Folder, Config File, "
@@ -960,18 +960,20 @@ class PETsysGUIApp:
             return
 
         if not self.daqd_state.get():
-            self.log_message("⚠️ ERROR: DAQD must be ON to run the pipeline!")
+            self.log_message("[WARNING] ERROR: DAQD must be ON to run the pipeline!")
             return
 
         if not self.system_initialized:
-            self.log_message("⚠️ ERROR: System must be initialized to run the pipeline!")
+            self.log_message(
+                "[WARNING] ERROR: System must be initialized to run the pipeline!"
+            )
             return
 
         # Disable the pipeline button during execution
         self.pipeline_button.configure(state="disabled")
 
         self.log_message("\n" + "=" * 80)
-        self.log_message("🚀 STARTING COMPLETE AUTOMATED PIPELINE")
+        self.log_message("[*] STARTING COMPLETE AUTOMATED PIPELINE")
         self.log_message("=" * 80 + "\n")
 
         # Calculate file paths
@@ -985,12 +987,14 @@ class PETsysGUIApp:
 
         # Update status
         self.pipeline_status_label.configure(
-            text=f"⏳ Step 1/4: Acquiring data ({self.acq_time}s)...",
+            text=f"[WAIT] Step 1/4: Acquiring data ({self.acq_time}s)...",
             text_color="orange",
         )
 
         # Step 1: Acquire data
-        self.log_message(f"📡 STEP 1/4: Acquiring data for {self.acq_time} seconds...")
+        self.log_message(
+            f"[ACQ] STEP 1/4: Acquiring data for {self.acq_time} seconds..."
+        )
         self.acquire_data()
 
         # Schedule the next steps with delays to allow commands to complete
@@ -998,17 +1002,17 @@ class PETsysGUIApp:
         def step2_convert_to_ldat():
             # Wait for rawf file to exist
             if not os.path.exists(rawf_file):
-                self.log_message("⏳ Waiting for acquisition to complete...")
+                self.log_message("[WAIT] Waiting for acquisition to complete...")
                 self.root.after(2000, step2_convert_to_ldat)
                 return
 
-            self.log_message(f"\n✅ Acquisition completed! Found: {rawf_file}")
+            self.log_message(f"\n[OK] Acquisition completed! Found: {rawf_file}")
             self.log_message(
-                f"🔄 STEP 2/4: Converting RAWF to LDAT (splitting into {MAX_SPLIT_FILES} files)..."
+                f"[CONVERT] STEP 2/4: Converting RAWF to LDAT (splitting into {MAX_SPLIT_FILES} files)..."
             )
 
             self.pipeline_status_label.configure(
-                text=f"⏳ Step 2/4: Converting to LDAT ({MAX_SPLIT_FILES} splits)...",
+                text=f"[WAIT] Step 2/4: Converting to LDAT ({MAX_SPLIT_FILES} splits)...",
                 text_color="orange",
             )
 
@@ -1030,17 +1034,17 @@ class PETsysGUIApp:
             ldat_files = glob.glob(ldat_pattern)
 
             if not ldat_files:
-                self.log_message("⏳ Waiting for LDAT conversion to complete...")
+                self.log_message("[WAIT] Waiting for LDAT conversion to complete...")
                 self.root.after(3000, step3_generate_energy_cal)
                 return
 
             self.log_message(
-                f"\n✅ LDAT conversion completed! Found {len(ldat_files)} files"
+                f"\n[OK] LDAT conversion completed! Found {len(ldat_files)} files"
             )
-            self.log_message("📊 STEP 3/4: Generating Energy Calibration file...")
+            self.log_message("[CAL] STEP 3/4: Generating Energy Calibration file...")
 
             self.pipeline_status_label.configure(
-                text="⏳ Step 3/4: Generating energy calibration...",
+                text="[WAIT] Step 3/4: Generating energy calibration...",
                 text_color="orange",
             )
 
@@ -1061,7 +1065,9 @@ class PETsysGUIApp:
 
             # Find the most recent encal file
             if not encal_files:
-                self.log_message("⏳ Waiting for Energy Cal generation to complete...")
+                self.log_message(
+                    "[WAIT] Waiting for Energy Cal generation to complete..."
+                )
                 self.root.after(3000, step4_generate_lm)
                 return
 
@@ -1075,15 +1081,17 @@ class PETsysGUIApp:
             ldat_file = glob.glob(ldat_pattern)
 
             if not ldat_file:
-                self.log_message("⚠️ ERROR: Could not find LDAT file for LM generation!")
+                self.log_message(
+                    "[WARNING] ERROR: Could not find LDAT file for LM generation!"
+                )
                 pipeline_complete(False)
                 return
 
-            self.log_message(f"\n✅ Energy Cal completed! Using: {encal_file}")
-            self.log_message("📄 STEP 4/4: Generating Listmode file...")
+            self.log_message(f"\n[OK] Energy Cal completed! Using: {encal_file}")
+            self.log_message("[LM] STEP 4/4: Generating Listmode file...")
 
             self.pipeline_status_label.configure(
-                text="⏳ Step 4/4: Generating LM file...", text_color="orange"
+                text="[WAIT] Step 4/4: Generating LM file...", text_color="orange"
             )
 
             # Update LM generation entries
@@ -1102,17 +1110,17 @@ class PETsysGUIApp:
         def pipeline_complete(success):
             if success:
                 self.log_message("\n" + "=" * 80)
-                self.log_message("✅ COMPLETE PIPELINE FINISHED SUCCESSFULLY!")
+                self.log_message("[SUCCESS] COMPLETE PIPELINE FINISHED SUCCESSFULLY!")
                 self.log_message("=" * 80 + "\n")
                 self.pipeline_status_label.configure(
-                    text="✅ Pipeline completed successfully!", text_color="green"
+                    text="[OK] Pipeline completed successfully!", text_color="green"
                 )
             else:
                 self.log_message("\n" + "=" * 80)
-                self.log_message("❌ PIPELINE ENCOUNTERED AN ERROR")
+                self.log_message("[ERROR] PIPELINE ENCOUNTERED AN ERROR")
                 self.log_message("=" * 80 + "\n")
                 self.pipeline_status_label.configure(
-                    text="❌ Pipeline failed - check logs", text_color="red"
+                    text="[FAIL] Pipeline failed - check logs", text_color="red"
                 )
 
             # Re-enable the pipeline button
@@ -1174,7 +1182,7 @@ class PETsysGUIApp:
         self.pipeline_button.configure(state="normal")
 
         # Show recommendation message
-        recommendation = "⚠️ RECOMMENDATION: Wait at least 5 minutes before acquiring data for system stabilization ⚠️"
+        recommendation = "[RECOMMENDATION] Wait at least 5 minutes before acquiring data for system stabilization"
         self.log_message("\n" + recommendation + "\n")
 
         # Highlight the message by changing its appearance
