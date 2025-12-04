@@ -17,6 +17,7 @@ ctk.set_default_color_theme(
 ctk.DrawEngine.preferred_drawing_method = "polygon_shapes"
 
 SPLIT_TIME_OFFSET = 0.1  # seconds
+MAX_SPLIT_FILES = max(1, os.cpu_count() - 2)  # CPU cores - 2 for safety
 
 
 def clean_tmp_and_shm():
@@ -98,8 +99,7 @@ class PETsysGUIApp:
         # LM file generation parameters
         self.lm_input_file = ""
         self.lm_encal_file = ""
-        self.lm_calibration_file = ""
-        self.lm_output_file = ""
+        self.lm_cog_limits_file = ""
 
     def create_labeled_frame(self, parent, title):
         frame = ctk.CTkFrame(parent)
@@ -198,8 +198,18 @@ class PETsysGUIApp:
             width=100,
         ).grid(row=2, column=2, padx=5, pady=2)
 
+        # --- Create two-column layout: Left (System Control + Data Acquisition) | Right (Pipeline) ---
+        columns_container = ctk.CTkFrame(self.setup_tab, fg_color="transparent")
+        columns_container.pack(padx=10, pady=5, fill="both", expand=True)
+        columns_container.grid_columnconfigure(0, weight=1)
+        columns_container.grid_columnconfigure(1, weight=1)
+
+        # LEFT COLUMN: System Control and Data Acquisition
+        left_column = ctk.CTkFrame(columns_container, fg_color="transparent")
+        left_column.grid(row=0, column=0, padx=(0, 5), sticky="nsew")
+
         # --- System Control Frame ---
-        control_frame = self.create_labeled_frame(self.setup_tab, "System Control")
+        control_frame = self.create_labeled_frame(left_column, "System Control")
         control_frame.pack(padx=10, pady=5, fill="x")
 
         # DAQD Toggle
@@ -221,7 +231,7 @@ class PETsysGUIApp:
         self.init_system_button.grid(row=1, column=1, padx=20, pady=10)
 
         # --- Acquisition Frame ---
-        acq_frame = self.create_labeled_frame(self.setup_tab, "Data Acquisition")
+        acq_frame = self.create_labeled_frame(left_column, "Data Acquisition")
         acq_frame.pack(padx=10, pady=5, fill="x")
 
         # Hardware Trigger flag (checkbutton)
@@ -240,6 +250,54 @@ class PETsysGUIApp:
             acq_frame, text="Acquire Data", command=self.acquire_data, state="disabled"
         )
         self.acquire_button.grid(row=1, column=1, padx=20, pady=10)
+
+        # RIGHT COLUMN: Complete Pipeline
+        right_column = ctk.CTkFrame(columns_container, fg_color="transparent")
+        right_column.grid(row=0, column=1, padx=(5, 0), sticky="nsew")
+
+        # --- Complete Pipeline Frame (Fancy Automation Button) ---
+        pipeline_frame = self.create_labeled_frame(
+            right_column, "🚀 Complete Automated Pipeline"
+        )
+        pipeline_frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        # Configure grid column to expand
+        pipeline_frame.grid_columnconfigure(0, weight=1)
+
+        # Add description
+        desc_label = ctk.CTkLabel(
+            pipeline_frame,
+            text="Execute the complete workflow:\nAcquire → Convert → Calibrate → Generate LM",
+            font=ctk.CTkFont(size=12, weight="normal"),
+            text_color="gray30",  # Darker gray for better readability
+            justify="center",
+        )
+        desc_label.grid(row=1, column=0, padx=20, pady=(10, 10), sticky="ew")
+
+        # Big fancy pipeline button
+        self.pipeline_button = ctk.CTkButton(
+            pipeline_frame,
+            text="▶ RUN COMPLETE PIPELINE",
+            command=self.run_complete_pipeline,
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            fg_color="#2ecc71",  # Vibrant green when enabled
+            hover_color="#27ae60",  # Darker green on hover
+            text_color="white",  # White text for better contrast
+            state="disabled",
+        )
+        self.pipeline_button.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+
+        # Status label for pipeline progress
+        self.pipeline_status_label = ctk.CTkLabel(
+            pipeline_frame,
+            text="",
+            font=ctk.CTkFont(size=10),
+            text_color="orange",
+        )
+        self.pipeline_status_label.grid(
+            row=3, column=0, padx=20, pady=(0, 10), sticky="ew"
+        )
 
     def setup_rawf_to_ldat_tab(self):
         # --- Data File Selection for Processing ---
@@ -274,6 +332,14 @@ class PETsysGUIApp:
         self.split_entry = ctk.CTkEntry(proc_settings_frame, width=100)
         self.split_entry.grid(row=1, column=1, sticky="w", padx=5, pady=2)
         self.split_entry.insert(0, "1")
+
+        # Warning label for max split files
+        ctk.CTkLabel(
+            proc_settings_frame,
+            text=f"(Max: {MAX_SPLIT_FILES} = CPU cores - 2)",
+            text_color="red",
+            font=ctk.CTkFont(size=10),
+        ).grid(row=1, column=2, sticky="w", padx=5, pady=2)
 
         # --- Conversion Buttons Frame ---
         conversion_frame = self.create_labeled_frame(
@@ -353,28 +419,18 @@ class PETsysGUIApp:
             lm_settings_frame, text="Browse", command=self.browse_lm_encal, width=100
         ).grid(row=2, column=2, padx=5, pady=2)
 
-        # Calibration file
-        ctk.CTkLabel(lm_settings_frame, text="Calibration File:").grid(
+        # COG limits file
+        ctk.CTkLabel(lm_settings_frame, text="COG Limits File:").grid(
             row=3, column=0, sticky="e", padx=5, pady=2
         )
-        self.lm_calib_entry = ctk.CTkEntry(lm_settings_frame)
-        self.lm_calib_entry.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkButton(
-            lm_settings_frame, text="Browse", command=self.browse_lm_calib, width=100
-        ).grid(row=3, column=2, padx=5, pady=2)
-
-        # Output LM file
-        ctk.CTkLabel(lm_settings_frame, text="Output LM Folder:").grid(
-            row=4, column=0, sticky="e", padx=5, pady=2
-        )
-        self.lm_output_entry = ctk.CTkEntry(lm_settings_frame)
-        self.lm_output_entry.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
+        self.lm_cog_limits_entry = ctk.CTkEntry(lm_settings_frame)
+        self.lm_cog_limits_entry.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkButton(
             lm_settings_frame,
-            text="Set Output",
-            command=self.browse_lm_output_folder,
+            text="Browse",
+            command=self.browse_lm_cog_limits,
             width=100,
-        ).grid(row=4, column=2, padx=5, pady=2)
+        ).grid(row=3, column=2, padx=5, pady=2)
 
         # Generate button
         generate_frame = ctk.CTkFrame(self.lm_generation_tab, fg_color="transparent")
@@ -447,6 +503,15 @@ class PETsysGUIApp:
             self.lm_encal_entry.delete(0, tk.END)
             self.lm_encal_entry.insert(0, filename)
 
+    def browse_lm_cog_limits(self):
+        filename = filedialog.askopenfilename(
+            title="Select COG Limits File",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+        )
+        if filename:
+            self.lm_cog_limits_entry.delete(0, tk.END)
+            self.lm_cog_limits_entry.insert(0, filename)
+
     def browse_rawf_file(self):
         filename = filedialog.askopenfilename(
             title="Select Rawf File",
@@ -456,21 +521,6 @@ class PETsysGUIApp:
         if filename:
             self.proc_data_entry.delete(0, tk.END)
             self.proc_data_entry.insert(0, filename)
-
-    def browse_lm_calib(self):
-        filename = filedialog.askopenfilename(
-            title="Select Calibration File",
-            filetypes=[("Calibration Files", "*.cal *.json"), ("All Files", "*.*")],
-        )
-        if filename:
-            self.lm_calib_entry.delete(0, tk.END)
-            self.lm_calib_entry.insert(0, filename)
-
-    def browse_lm_output_folder(self):
-        folder = filedialog.askdirectory(title="Select Output LM Folder")
-        if folder:
-            self.lm_output_entry.delete(0, tk.END)
-            self.lm_output_entry.insert(0, folder)
 
     def browse_petsys_folder(self):
         folder = filedialog.askdirectory(
@@ -566,6 +616,13 @@ class PETsysGUIApp:
                 self.log_message(
                     "Number of split files must be at least 1. Reset to 1."
                 )
+            elif self.split_files > MAX_SPLIT_FILES:
+                self.split_files = MAX_SPLIT_FILES
+                self.split_entry.delete(0, tk.END)
+                self.split_entry.insert(0, str(MAX_SPLIT_FILES))
+                self.log_message(
+                    f"Number of split files exceeds maximum ({MAX_SPLIT_FILES} = CPU cores - 2). Reset to {MAX_SPLIT_FILES}."
+                )
         except ValueError:
             self.split_files = 1
             self.split_entry.delete(0, tk.END)
@@ -628,6 +685,7 @@ class PETsysGUIApp:
             # Reset initialization state and disable acquire button when DAQD is turned off
             self.system_initialized = False
             self.acquire_button.configure(state="disabled")
+            self.pipeline_button.configure(state="disabled")
 
     def init_daqd_window(self):
         # Create DAQD window only if it doesn't already exist.
@@ -773,7 +831,7 @@ class PETsysGUIApp:
         command = (
             f"cd {self.petsys_folder} && "
             f"./convert_raw_to_coincidence --config {self.config_file} -i {file_full_path} "
-            f"-o {file_full_path}_coincCompact --writeBinaryCompact --writeMultipleHits 64 {split_time_param}"
+            f"-o {file_full_path}_coincFixed --writeBinaryFixed --writeMultipleHits 16 {split_time_param}"
         )
         self.run_command(command)
 
@@ -815,33 +873,37 @@ class PETsysGUIApp:
         command = (
             f"cd {self.petsys_folder} && "
             f"./convert_raw_to_group --config {self.config_file} -i {file_full_path} "
-            f"-o {file_full_path}_groupCompact --writeBinaryCompact --writeMultipleHits 64 {split_time_param}"
+            f"-o {file_full_path}_groupFixed --writeBinaryFixed --writeMultipleHits 16 {split_time_param}"
         )
         self.run_command(command)
 
     def generate_lm_file(self):
+        self.update_settings()
+        if not all([self.process_petsys_folder, self.process_config_file]):
+            self.log_message("Please set 'process_petsys' Folder and YAML Config File.")
+            return
+
         # Get settings
         input_file = self.lm_input_entry.get().strip()
         encal_file = self.lm_encal_entry.get().strip()
-        calib_file = self.lm_calib_entry.get().strip()
-        output_file = self.lm_output_entry.get().strip()
+        cog_limits_file = self.lm_cog_limits_entry.get().strip()
 
-        if not all([input_file, encal_file, calib_file, output_file]):
+        if not all([input_file, encal_file, cog_limits_file]):
             self.log_message("Please provide all required files for LM generation.")
             return
 
-        # Example command for LM file generation
-        # Replace with your actual script/command
+        # Build the command using conda run -n for cleaner conda activation
         command = (
-            f"python /path/to/lm_converter.py "
-            f"--input {input_file} "
-            f"--config {encal_file} "
-            f"--calibration {calib_file} "
-            f"--output {output_file}"
+            f"conda run -n process_petsys "
+            f"python {self.process_petsys_folder}/scripts_cornell/cornell_listmode_cog_fixed.py "
+            f"{self.process_config_file} {encal_file} {cog_limits_file} {input_file}"
         )
 
         self.log_message("Generating LM file...")
-        self.run_command(command)
+        self.run_command(
+            command,
+            callback=lambda: self.log_message("LM file generation completed."),
+        )
 
     def generate_energy_cal_file(self):
         self.update_settings()
@@ -866,20 +928,216 @@ class PETsysGUIApp:
         for f in ldat_files:
             self.log_message(f"Found LDAT file: {f}")
 
-        # Build the command wrapped in a bash call to source conda and run the script.
+        # Build the command using conda run -n for cleaner conda activation
         command = (
-            "bash -c 'source /home/sie/miniconda3/etc/profile.d/conda.sh && "
-            "conda activate process_petsys && "
-            f"cd {self.process_petsys_folder} && "
-            f"python scripts_cornell/cornell_slab_en_cal.py "
-            f"{self.process_config_file} {' '.join(ldat_files)} && "
-            "conda deactivate'"
+            f"conda run -n process_petsys "
+            f"python {self.process_petsys_folder}/scripts_cornell/cornell_slab_en_cal.py "
+            f"{self.process_config_file} {' '.join(ldat_files)}"
         )
         self.log_message("Generating Energy cal file...")
         self.run_command(
             command,
             callback=lambda: self.log_message("Energy cal file generation completed."),
         )
+
+    def run_complete_pipeline(self):
+        """Execute the complete automated pipeline:
+        1. Acquire data (generates .rawf)
+        2. Convert RAWF to LDAT (with MAX_SPLIT_FILES)
+        3. Generate Energy Cal file (.encal)
+        4. Generate LM file
+        """
+        self.update_settings()
+
+        # Validate all required settings
+        cog_limits_file = self.lm_cog_limits_entry.get().strip()
+
+        if not all(
+            [
+                self.petsys_folder,
+                self.output_data_folder,
+                self.config_file,
+                self.process_petsys_folder,
+                self.process_config_file,
+                cog_limits_file,
+            ]
+        ):
+            self.log_message(
+                "⚠️ ERROR: Please configure all required settings before running the pipeline!"
+            )
+            self.log_message(
+                "   Required: PETsys Folder, Output Data Folder, Config File, "
+                "process_petsys Folder, YAML Config File, and COG Limits File"
+            )
+            return
+
+        if not self.daqd_state.get():
+            self.log_message("⚠️ ERROR: DAQD must be ON to run the pipeline!")
+            return
+
+        if not self.system_initialized:
+            self.log_message("⚠️ ERROR: System must be initialized to run the pipeline!")
+            return
+
+        # Disable the pipeline button during execution
+        self.pipeline_button.configure(state="disabled")
+
+        self.log_message("\n" + "=" * 80)
+        self.log_message("🚀 STARTING COMPLETE AUTOMATED PIPELINE")
+        self.log_message("=" * 80 + "\n")
+
+        # Calculate file paths
+        file_basename = self.acq_file_name + f"_{int(self.acq_time)}s"
+        rawf_file = os.path.join(self.output_data_folder, file_basename + ".rawf")
+
+        # Set split files to maximum for optimal processing
+        self.split_files = MAX_SPLIT_FILES
+        self.split_entry.delete(0, tk.END)
+        self.split_entry.insert(0, str(MAX_SPLIT_FILES))
+
+        # Update status
+        self.pipeline_status_label.configure(
+            text=f"⏳ Step 1/4: Acquiring data ({self.acq_time}s)...",
+            text_color="orange",
+        )
+
+        # Step 1: Acquire data
+        self.log_message(f"📡 STEP 1/4: Acquiring data for {self.acq_time} seconds...")
+        self.acquire_data()
+
+        # Schedule the next steps with delays to allow commands to complete
+        # We'll use a polling approach to check if files exist
+        def step2_convert_to_ldat():
+            # Wait for rawf file to exist
+            if not os.path.exists(rawf_file):
+                self.log_message("⏳ Waiting for acquisition to complete...")
+                self.root.after(2000, step2_convert_to_ldat)
+                return
+
+            self.log_message(f"\n✅ Acquisition completed! Found: {rawf_file}")
+            self.log_message(
+                f"🔄 STEP 2/4: Converting RAWF to LDAT (splitting into {MAX_SPLIT_FILES} files)..."
+            )
+
+            self.pipeline_status_label.configure(
+                text=f"⏳ Step 2/4: Converting to LDAT ({MAX_SPLIT_FILES} splits)...",
+                text_color="orange",
+            )
+
+            # Update the proc_data_entry to point to the acquired file
+            self.proc_data_entry.delete(0, tk.END)
+            self.proc_data_entry.insert(0, file_basename + ".rawf")
+
+            # Convert to coincidence format
+            self.convert_raw_to_coincidence()
+
+            # Schedule next step
+            self.root.after(5000, step3_generate_energy_cal)
+
+        def step3_generate_energy_cal():
+            # Look for the generated ldat files
+            ldat_pattern = os.path.join(
+                self.output_data_folder, file_basename + "_coincFixed*.ldat"
+            )
+            ldat_files = glob.glob(ldat_pattern)
+
+            if not ldat_files:
+                self.log_message("⏳ Waiting for LDAT conversion to complete...")
+                self.root.after(3000, step3_generate_energy_cal)
+                return
+
+            self.log_message(
+                f"\n✅ LDAT conversion completed! Found {len(ldat_files)} files"
+            )
+            self.log_message("📊 STEP 3/4: Generating Energy Calibration file...")
+
+            self.pipeline_status_label.configure(
+                text="⏳ Step 3/4: Generating energy calibration...",
+                text_color="orange",
+            )
+
+            # Update the ldat_basename_entry to point to one of the ldat files
+            self.ldat_basename_entry.delete(0, tk.END)
+            self.ldat_basename_entry.insert(0, ldat_files[0])
+
+            # Generate energy cal
+            self.generate_energy_cal_file()
+
+            # Schedule next step
+            self.root.after(5000, step4_generate_lm)
+
+        def step4_generate_lm():
+            # Look for the generated encal file
+            encal_pattern = os.path.join(self.output_data_folder, "*.encal")
+            encal_files = glob.glob(encal_pattern)
+
+            # Find the most recent encal file
+            if not encal_files:
+                self.log_message("⏳ Waiting for Energy Cal generation to complete...")
+                self.root.after(3000, step4_generate_lm)
+                return
+
+            # Get the most recent encal file
+            encal_file = max(encal_files, key=os.path.getmtime)
+
+            # Find the first ldat file for LM generation
+            ldat_pattern = os.path.join(
+                self.output_data_folder, file_basename + "_coincFixed_00000000.ldat"
+            )
+            ldat_file = glob.glob(ldat_pattern)
+
+            if not ldat_file:
+                self.log_message("⚠️ ERROR: Could not find LDAT file for LM generation!")
+                pipeline_complete(False)
+                return
+
+            self.log_message(f"\n✅ Energy Cal completed! Using: {encal_file}")
+            self.log_message("📄 STEP 4/4: Generating Listmode file...")
+
+            self.pipeline_status_label.configure(
+                text="⏳ Step 4/4: Generating LM file...", text_color="orange"
+            )
+
+            # Update LM generation entries
+            self.lm_input_entry.delete(0, tk.END)
+            self.lm_input_entry.insert(0, ldat_file[0])
+
+            self.lm_encal_entry.delete(0, tk.END)
+            self.lm_encal_entry.insert(0, encal_file)
+
+            # Generate LM file
+            self.generate_lm_file()
+
+            # Schedule completion check
+            self.root.after(5000, lambda: pipeline_complete(True))
+
+        def pipeline_complete(success):
+            if success:
+                self.log_message("\n" + "=" * 80)
+                self.log_message("✅ COMPLETE PIPELINE FINISHED SUCCESSFULLY!")
+                self.log_message("=" * 80 + "\n")
+                self.pipeline_status_label.configure(
+                    text="✅ Pipeline completed successfully!", text_color="green"
+                )
+            else:
+                self.log_message("\n" + "=" * 80)
+                self.log_message("❌ PIPELINE ENCOUNTERED AN ERROR")
+                self.log_message("=" * 80 + "\n")
+                self.pipeline_status_label.configure(
+                    text="❌ Pipeline failed - check logs", text_color="red"
+                )
+
+            # Re-enable the pipeline button
+            self.pipeline_button.configure(state="normal")
+
+            # Clear status after 10 seconds
+            self.root.after(
+                10000, lambda: self.pipeline_status_label.configure(text="")
+            )
+
+        # Start the pipeline chain
+        # Wait a bit for acquire to start, then begin monitoring
+        self.root.after(int(self.acq_time * 1000) + 3000, step2_convert_to_ldat)
 
     def init_system(self):
         self.update_settings()
@@ -925,6 +1183,7 @@ class PETsysGUIApp:
     def after_init(self):
         self.system_initialized = True
         self.acquire_button.configure(state="normal")
+        self.pipeline_button.configure(state="normal")
 
         # Show recommendation message
         recommendation = "⚠️ RECOMMENDATION: Wait at least 5 minutes before acquiring data for system stabilization ⚠️"
