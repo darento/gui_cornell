@@ -1,6 +1,6 @@
 # gui_cornell
 
-**A Python-based GUI to manage PETsys commands for module validation.**
+**A Python-based GUI to acquire using PETsys software.**
 
 This project provides a modern graphical interface built with **CustomTkinter** to simplify running PETsys commands. It was developed to bridge existing PETsys command-line workflows (such as data acquisition, conversion, and DAQD activation) with an easy-to-use GUI. This is particularly useful in research or instrumentation environments where quick, interactive control is desired.
 
@@ -9,7 +9,7 @@ This project provides a modern graphical interface built with **CustomTkinter** 
 ## 🖥️ Features
 
 - **Modern UI:**
-  Built with CustomTkinter for a sleek, modern look with Dark/Light mode support.
+  Built with CustomTkinter for a sleek, modern look with.
 
 - **Command Buttons:**
   Execute specific PETsys commands like:
