@@ -703,7 +703,7 @@ class PETsysGUIApp:
             return
 
         # Prefix with stdbuf -oL for line buffering.
-        command = f"stdbuf -oL {self.petsys_folder}/daqd --daq-type PFP_KX7"
+        command = f"stdbuf -oL {self.petsys_folder}/daqd --socket-name /tmp/d.sock --daq-type PFP_KX7 --card /dev/psdaq0 --card /dev/psdaq1"
         self.log_daqd("Starting DAQD with command: " + command)
         try:
             process = subprocess.Popen(
