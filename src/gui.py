@@ -1,53 +1,45 @@
 import glob
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import customtkinter as ctk
-import subprocess
-import threading
 import os
 import signal
+import subprocess
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from typing import Optional, Callable, List
+
+import customtkinter as ctk
 from PIL import Image, ImageTk
 
-# Set CustomTkinter appearance
-ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
-ctk.set_default_color_theme(
-    "dark-blue"
-)  # Themes: "blue" (standard), "green", "dark-blue"
-# Force polygon-based drawing instead of font-based
+ctk.set_appearance_mode("System")
+ctk.set_default_color_theme("dark-blue")
 ctk.DrawEngine.preferred_drawing_method = "polygon_shapes"
 
-SPLIT_TIME_OFFSET = 0.1  # seconds
-MAX_SPLIT_FILES = max(1, os.cpu_count() - 2)  # CPU cores - 2 for safety
+SPLIT_TIME_OFFSET: float = 0.1
+MAX_SPLIT_FILES: int = max(1, os.cpu_count() - 2)
 
 
-def clean_tmp_and_shm():
-    # Remove socket file if exists.
+def clean_tmp_and_shm() -> None:
+    """Remove temporary socket and shared memory files."""
     if os.path.exists("/tmp/d.sock"):
         subprocess.call("rm /tmp/d.sock", shell=True)
-    # Remove shared-memory file if exists.
     if os.path.exists("/dev/shm/daqd_shm"):
         subprocess.call("rm /dev/shm/daqd_shm", shell=True)
 
 
 class PETsysGUIApp:
-    def __init__(self, root):
-        # Clean at startup
+    def __init__(self, root: ctk.CTk) -> None:
         clean_tmp_and_shm()
 
         self.root = root
         self.root.title("MAGUI Cornell - PETsys Manager - LM file converter")
-        self.root.geometry("900x900")  # Increased size slightly for CTk spacing
-        # self.root.maxsize(1400, 900) # Optional
+        self.root.geometry("900x900")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Initialize variables
         self.initialize_variables()
 
-        # Create Tabview (replaces Notebook)
         self.tabview = ctk.CTkTabview(root)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # Create tabs
         self.tabview.add("System Setup & Acquisition")
         self.tabview.add("RAWF to LDAT Conversion")
         self.tabview.add("LDAT Processing")
@@ -58,13 +50,11 @@ class PETsysGUIApp:
         self.ldat_proc_tab = self.tabview.tab("LDAT Processing")
         self.lm_generation_tab = self.tabview.tab("LM File Generation")
 
-        # Populate tabs
         self.setup_acquisition_tab()
         self.setup_rawf_to_ldat_tab()
         self.setup_ldat_proc_tab()
         self.setup_lm_generation_tab()
 
-        # Common output text area (shared across tabs)
         self.output_frame = ctk.CTkFrame(root)
         self.output_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -74,34 +64,33 @@ class PETsysGUIApp:
         self.output_text = ctk.CTkTextbox(self.output_frame, width=800, height=150)
         self.output_text.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Add the logo at the bottom
         self.add_logo()
 
-    def log_message(self, message):
+    def log_message(self, message: str) -> None:
+        """Log a message to the output text area."""
         self.output_text.insert(tk.END, message + "\n")
-        self.output_text.see(tk.END)  # force scroll to the bottom
+        self.output_text.see(tk.END)
 
-    def initialize_variables(self):
-        # Common parameters
-        self.petsys_folder = ""
-        self.output_data_folder = ""
-        self.acq_file_name = "data_file"
-        self.acq_time = 10
-        self.split_files = 1
-        self.config_file = ""
-        self.daqd_process = None
-        self.system_initialized = False
+    def initialize_variables(self) -> None:
+        """Initialize all instance variables."""
+        self.petsys_folder: str = ""
+        self.output_data_folder: str = ""
+        self.acq_file_name: str = "data_file"
+        self.acq_time: int = 10
+        self.split_files: int = 1
+        self.config_file: str = ""
+        self.daqd_process: Optional[subprocess.Popen] = None
+        self.system_initialized: bool = False
 
-        # Processing parameters (shared by LDAT processing and LM generation)
-        self.process_petsys_folder = ""
-        self.process_config_file = ""
+        self.process_petsys_folder: str = ""
+        self.process_config_file: str = ""
 
-        # LM file generation parameters
-        self.lm_input_file = ""
-        self.lm_encal_file = ""
-        self.lm_cog_limits_file = ""
+        self.lm_input_file: str = ""
+        self.lm_encal_file: str = ""
+        self.lm_cog_limits_file: str = ""
 
-    def create_labeled_frame(self, parent, title):
+    def create_labeled_frame(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
+        """Create a frame with a bold title label at the top."""
         frame = ctk.CTkFrame(parent)
         label = ctk.CTkLabel(
             frame, text=title, font=ctk.CTkFont(size=14, weight="bold")
@@ -109,7 +98,7 @@ class PETsysGUIApp:
         label.grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(5, 0))
         return frame
 
-    def setup_acquisition_tab(self):
+    def setup_acquisition_tab(self) -> None:
         # --- Settings Frame ---
         settings_frame = self.create_labeled_frame(self.setup_tab, "Settings")
         settings_frame.pack(padx=10, pady=5, fill="x")
@@ -299,8 +288,7 @@ class PETsysGUIApp:
             row=3, column=0, padx=20, pady=(0, 10), sticky="ew"
         )
 
-    def setup_rawf_to_ldat_tab(self):
-        # --- Data File Selection for Processing ---
+    def setup_rawf_to_ldat_tab(self) -> None:
         proc_file_frame = self.create_labeled_frame(
             self.rawf_to_ldat_tab, "Data File Selection"
         )
@@ -362,8 +350,7 @@ class PETsysGUIApp:
         )
         self.convert_to_group_button.grid(row=1, column=1, padx=20, pady=10)
 
-    def setup_ldat_proc_tab(self):
-        # --- Energy cal file generation Section ---
+    def setup_ldat_proc_tab(self) -> None:
         proc_frame = self.create_labeled_frame(
             self.ldat_proc_tab, "Energy cal file generation"
         )
@@ -388,8 +375,7 @@ class PETsysGUIApp:
         )
         self.process_ldat_button.grid(row=2, column=0, columnspan=3, padx=20, pady=10)
 
-    def setup_lm_generation_tab(self):
-        # --- LM Generation Settings Frame ---
+    def setup_lm_generation_tab(self) -> None:
         lm_settings_frame = self.create_labeled_frame(
             self.lm_generation_tab, "LM File Generation Settings"
         )
@@ -443,8 +429,8 @@ class PETsysGUIApp:
         )
         self.generate_lm_button.pack(padx=5, pady=5)
 
-    def add_logo(self):
-        # Add the onco_logo.jpeg image at the bottom of the GUI.
+    def add_logo(self) -> None:
+        """Add the Onco Vision logo at the bottom of the GUI."""
         try:
             # Try multiple possible paths
             possible_paths = [
@@ -485,7 +471,7 @@ class PETsysGUIApp:
             self.log_message(f"Error loading onco_logo.jpeg: {e}")
 
     # All the browse methods for file selection
-    def browse_lm_input(self):
+    def browse_lm_input(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select LDAT Input File",
             filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
@@ -494,7 +480,7 @@ class PETsysGUIApp:
             self.lm_input_entry.delete(0, tk.END)
             self.lm_input_entry.insert(0, filename)
 
-    def browse_lm_encal(self):
+    def browse_lm_encal(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select Energy cal File",
             filetypes=[("Encal Files", "*.encal"), ("All Files", "*.*")],
@@ -503,7 +489,7 @@ class PETsysGUIApp:
             self.lm_encal_entry.delete(0, tk.END)
             self.lm_encal_entry.insert(0, filename)
 
-    def browse_lm_cog_limits(self):
+    def browse_lm_cog_limits(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select COG Limits File",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
@@ -512,7 +498,7 @@ class PETsysGUIApp:
             self.lm_cog_limits_entry.delete(0, tk.END)
             self.lm_cog_limits_entry.insert(0, filename)
 
-    def browse_rawf_file(self):
+    def browse_rawf_file(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select Rawf File",
             filetypes=[("Rawf Files", "*.rawf"), ("All Files", "*.*")],
@@ -522,7 +508,7 @@ class PETsysGUIApp:
             self.proc_data_entry.delete(0, tk.END)
             self.proc_data_entry.insert(0, filename)
 
-    def browse_petsys_folder(self):
+    def browse_petsys_folder(self) -> None:
         folder = filedialog.askdirectory(
             title="Select PETsys Folder", initialdir="/home/sie/sw/", mustexist=True
         )
@@ -530,7 +516,7 @@ class PETsysGUIApp:
             self.petsys_entry.delete(0, tk.END)
             self.petsys_entry.insert(0, folder)
 
-    def browse_output_folder(self):
+    def browse_output_folder(self) -> None:
         folder = filedialog.askdirectory(
             title="Select Output Data Folder",
             initialdir="/home/sie/Cornell/data/",
@@ -540,7 +526,7 @@ class PETsysGUIApp:
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, folder)
 
-    def browse_ldat_basename(self):
+    def browse_ldat_basename(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select Basename LDAT File",
             filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
@@ -550,7 +536,7 @@ class PETsysGUIApp:
             self.ldat_basename_entry.delete(0, tk.END)
             self.ldat_basename_entry.insert(0, filename)
 
-    def browse_process_petsys_folder(self):
+    def browse_process_petsys_folder(self) -> None:
         folder = filedialog.askdirectory(
             title="Select Process PETSYS Folder",
             initialdir="/home/sie/sw/",
@@ -560,7 +546,7 @@ class PETsysGUIApp:
             self.process_petsys_entry.delete(0, tk.END)
             self.process_petsys_entry.insert(0, folder)
 
-    def browse_process_config_file(self):
+    def browse_process_config_file(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select Processing Config File",
             filetypes=[
@@ -573,7 +559,7 @@ class PETsysGUIApp:
             self.process_config_entry.delete(0, tk.END)
             self.process_config_entry.insert(0, filename)
 
-    def browse_config_file(self):
+    def browse_config_file(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select Config File",
             filetypes=[("INI Files", "*.ini"), ("All Files", "*.*")],
@@ -584,13 +570,13 @@ class PETsysGUIApp:
             self.config_entry.insert(0, filename)
 
     # Remaining methods (existing functionality)
-    def on_close(self):
-        # Stop DAQD if running and clean files before exit.
+    def on_close(self) -> None:
+        """Cleanup on application exit."""
         self.stop_daqd()
         clean_tmp_and_shm()
         self.root.destroy()
 
-    def update_settings(self):
+    def update_settings(self) -> None:
         self.petsys_folder = self.petsys_entry.get().strip()
         self.output_data_folder = self.output_entry.get().strip()
         self.config_file = self.config_entry.get().strip()
@@ -645,7 +631,9 @@ class PETsysGUIApp:
         self.process_petsys_folder = self.process_petsys_entry.get().strip()
         self.process_config_file = self.process_config_entry.get().strip()
 
-    def run_command(self, command_line, callback=None):
+    def run_command(
+        self, command_line: str, callback: Optional[Callable] = None
+    ) -> None:
         self.log_message("Executing: " + command_line)
 
         def task():
@@ -670,7 +658,7 @@ class PETsysGUIApp:
 
         threading.Thread(target=task, daemon=True).start()
 
-    def toggle_daqd(self):
+    def toggle_daqd(self) -> None:
         if self.daqd_state.get():
             # Toggle turned on: update text and launch DAQD window
             self.daqd_toggle.configure(text="DAQD ON")
@@ -687,8 +675,7 @@ class PETsysGUIApp:
             self.acquire_button.configure(state="disabled")
             self.pipeline_button.configure(state="disabled")
 
-    def init_daqd_window(self):
-        # Create DAQD window only if it doesn't already exist.
+    def init_daqd_window(self) -> None:
         if hasattr(self, "daqd_window") and self.daqd_window.winfo_exists():
             return
         self.daqd_window = ctk.CTkToplevel(self.root)
@@ -701,15 +688,15 @@ class PETsysGUIApp:
         # Start DAQD in a background thread.
         threading.Thread(target=self.start_daqd, daemon=True).start()
 
-    def close_daqd_window(self):
-        # Called when the DAQD window is closed manually.
+    def close_daqd_window(self) -> None:
+        """Handle manual DAQD window close."""
         self.daqd_state.set(False)
         self.daqd_toggle.configure(text="DAQD OFF")
         self.daqd_toggle.deselect()  # Ensure visual state matches
         self.stop_daqd()
         self.daqd_window.destroy()
 
-    def start_daqd(self):
+    def start_daqd(self) -> None:
         self.petsys_folder = self.petsys_entry.get().strip()
         if not self.petsys_folder:
             self.log_daqd("PETsys Folder not set.")
@@ -748,7 +735,7 @@ class PETsysGUIApp:
             self.root.after(0, lambda: self.daqd_toggle.configure(text="DAQD OFF"))
             self.root.after(0, lambda: self.daqd_toggle.deselect())
 
-    def stop_daqd(self):
+    def stop_daqd(self) -> None:
         if self.daqd_process and self.daqd_process.poll() is None:
             try:
                 # Kill the entire process group.
@@ -758,7 +745,7 @@ class PETsysGUIApp:
                 self.log_daqd(f"Error terminating DAQD: {e}")
             self.daqd_process = None
 
-    def log_daqd(self, message):
+    def log_daqd(self, message: str) -> None:
         def append():
             if hasattr(self, "daqd_output") and self.daqd_output.winfo_exists():
                 self.daqd_output.insert(tk.END, message + "\n")
@@ -766,7 +753,7 @@ class PETsysGUIApp:
 
         self.root.after(0, append)
 
-    def acquire_data(self):
+    def acquire_data(self) -> None:
         self.update_settings()
 
         # Check if DAQD is running
@@ -795,7 +782,7 @@ class PETsysGUIApp:
         )
         self.run_command(command)
 
-    def convert_raw_to_coincidence(self):
+    def convert_raw_to_coincidence(self) -> None:
         self.update_settings()
         if not all([self.petsys_folder, self.output_data_folder, self.config_file]):
             self.log_message(
@@ -835,7 +822,7 @@ class PETsysGUIApp:
         )
         self.run_command(command)
 
-    def convert_raw_to_group(self):
+    def convert_raw_to_group(self) -> None:
         self.update_settings()
         if not all([self.petsys_folder, self.output_data_folder, self.config_file]):
             self.log_message(
@@ -877,7 +864,8 @@ class PETsysGUIApp:
         )
         self.run_command(command)
 
-    def generate_lm_file(self):
+    def generate_lm_file(self) -> None:
+        """Generate LM file using the complete pipeline."""
         self.update_settings()
         if not all([self.process_petsys_folder, self.process_config_file]):
             self.log_message("Please set 'process_petsys' Folder and YAML Config File.")
@@ -905,7 +893,7 @@ class PETsysGUIApp:
             callback=lambda: self.log_message("LM file generation completed."),
         )
 
-    def generate_energy_cal_file(self):
+    def generate_energy_cal_file(self) -> None:
         self.update_settings()
         if not all([self.process_petsys_folder, self.process_config_file]):
             self.log_message("Please set 'process_petsys' Folder and YAML Config File.")
@@ -940,7 +928,7 @@ class PETsysGUIApp:
             callback=lambda: self.log_message("Energy cal file generation completed."),
         )
 
-    def run_complete_pipeline(self):
+    def run_complete_pipeline(self) -> None:
         """Execute the complete automated pipeline:
         1. Acquire data (generates .rawf)
         2. Convert RAWF to LDAT (with MAX_SPLIT_FILES)
@@ -1139,7 +1127,7 @@ class PETsysGUIApp:
         # Wait a bit for acquire to start, then begin monitoring
         self.root.after(int(self.acq_time * 1000) + 3000, step2_convert_to_ldat)
 
-    def init_system(self):
+    def init_system(self) -> None:
         self.update_settings()
 
         # Check if DAQD is running - initialization requires DAQD
@@ -1180,7 +1168,7 @@ class PETsysGUIApp:
 
         threading.Thread(target=task, daemon=True).start()
 
-    def after_init(self):
+    def after_init(self) -> None:
         self.system_initialized = True
         self.acquire_button.configure(state="normal")
         self.pipeline_button.configure(state="normal")
@@ -1190,11 +1178,6 @@ class PETsysGUIApp:
         self.log_message("\n" + recommendation + "\n")
 
         # Highlight the message by changing its appearance
-        # CTkTextbox does not support tag_configure in the same way as tk.Text easily for colors without internal access
-        # But we can try using standard tkinter tags if CTkTextbox exposes the underlying widget or supports it.
-        # CTkTextbox is a wrapper around tk.Text.
-        # We can access the underlying text widget via self.output_text._textbox
-
         try:
             self.output_text._textbox.tag_configure(
                 "warning", foreground="red", font=("Helvetica", 10, "bold")
