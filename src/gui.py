@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from typing import Optional, Callable, List
@@ -16,6 +17,11 @@ ctk.DrawEngine.preferred_drawing_method = "polygon_shapes"
 
 SPLIT_TIME_OFFSET: float = 0.1
 MAX_SPLIT_FILES: int = max(1, os.cpu_count() - 2)
+
+# Pipeline configuration constants
+PIPELINE_DATA_DIR: str = "/data/nvmDisk/Cornell/data/FullPipeline"
+PIPELINE_ENCAL_DIR: str = "/home/sie/sw/process_petsys/encal_files"
+PIPELINE_COG_LIMITS_FILE: str = "/home/sie/sw/process_petsys/cog_limits.txt"
 
 
 def clean_tmp_and_shm() -> None:
@@ -475,6 +481,7 @@ class PETsysGUIApp:
         filename = filedialog.askopenfilename(
             title="Select LDAT Input File",
             filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
+            initialdir="/data/nvmDisk/Cornell/data/",
         )
         if filename:
             self.lm_input_entry.delete(0, tk.END)
@@ -484,6 +491,7 @@ class PETsysGUIApp:
         filename = filedialog.askopenfilename(
             title="Select Energy cal File",
             filetypes=[("Encal Files", "*.encal"), ("All Files", "*.*")],
+            initialdir="/home/sie/sw/process_petsys/encal_files/",
         )
         if filename:
             self.lm_encal_entry.delete(0, tk.END)
@@ -493,6 +501,7 @@ class PETsysGUIApp:
         filename = filedialog.askopenfilename(
             title="Select COG Limits File",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            initialdir="/home/sie/sw/process_petsys/",
         )
         if filename:
             self.lm_cog_limits_entry.delete(0, tk.END)
@@ -563,7 +572,7 @@ class PETsysGUIApp:
         filename = filedialog.askopenfilename(
             title="Select Config File",
             filetypes=[("INI Files", "*.ini"), ("All Files", "*.*")],
-            initialdir="/home/sie/Cornell/",
+            initialdir="/data/nvmDisk/Cornell/",
         )
         if filename:
             self.config_entry.delete(0, tk.END)
@@ -753,6 +762,45 @@ class PETsysGUIApp:
 
         self.root.after(0, append)
 
+    def cleanup_conversion_files(self, output_folder: str, base_file_path: str) -> None:
+        """
+        Clean up unwanted files generated during RAWF to LDAT conversion.
+        Deletes .lidx files and empty 0000.ldat file.
+
+        Args:
+            output_folder: The folder containing the converted files
+            base_file_path: The base path of the converted files (without extension)
+        """
+        try:
+            # Get the base filename from the full path
+            base_name = os.path.basename(base_file_path)
+
+            # Delete .lidx files matching the pattern
+            lidx_pattern = os.path.join(output_folder, base_name + "*.lidx")
+            lidx_files = glob.glob(lidx_pattern)
+            for lidx_file in lidx_files:
+                try:
+                    os.remove(lidx_file)
+                    self.log_message(f"Deleted: {lidx_file}")
+                except Exception as e:
+                    self.log_message(f"Warning: Could not delete {lidx_file}: {e}")
+
+            # Delete the empty 0000.ldat file if it exists
+            ldat_0000_pattern = os.path.join(output_folder, base_name + "*00000.ldat")
+            ldat_0000_matches = glob.glob(ldat_0000_pattern)
+            ldat_0000 = ldat_0000_matches[0] if ldat_0000_matches else None
+            if ldat_0000 and os.path.exists(ldat_0000):
+                try:
+                    os.remove(ldat_0000)
+                    self.log_message(f"Deleted empty LDAT file: {ldat_0000}")
+                except Exception as e:
+                    self.log_message(f"Warning: Could not delete {ldat_0000}: {e}")
+            else:
+                self.log_message("Note: Empty LDAT file not found")
+
+        except Exception as e:
+            self.log_message(f"Error during cleanup: {e}")
+
     def acquire_data(self) -> None:
         self.update_settings()
 
@@ -792,12 +840,13 @@ class PETsysGUIApp:
         file_full_path = os.path.join(
             self.output_data_folder, self.proc_data_entry.get()
         )
+        file_full_path = file_full_path.replace(".rawf", "")
 
         # Read the acquisition time from the proc_data_entry which has
         # the format of "rawf_file_basename_{acq_time}s"
         try:
             acq_time_str = file_full_path.split("_")[-1].replace("s", "")
-            acq_time_str = int(acq_time_str) + SPLIT_TIME_OFFSET
+            acq_time_str = int(acq_time_str)
         except ValueError:
             self.log_message(
                 "Error: Unable to extract acquisition time from the file name."
@@ -812,15 +861,21 @@ class PETsysGUIApp:
         # Calculate the split time if needed
         split_time_param = ""
         if self.split_files > 1:
-            split_time = acq_time_str / self.split_files
+            split_time = acq_time_str / self.split_files + SPLIT_TIME_OFFSET
             split_time_param = f"--splitTime {split_time} "
 
         command = (
             f"cd {self.petsys_folder} && "
-            f"./convert_raw_to_coincidence --config {self.config_file} -i {file_full_path} "
+            f"./convert_raw_to_coincidence_fixed --config {self.config_file} -i {file_full_path} "
             f"-o {file_full_path}_coincFixed --writeBinaryFixed --writeMultipleHits 16 {split_time_param}"
         )
-        self.run_command(command)
+
+        def cleanup_callback():
+            self.cleanup_conversion_files(
+                self.output_data_folder, file_full_path + "_coincFixed"
+            )
+
+        self.run_command(command, callback=cleanup_callback)
 
     def convert_raw_to_group(self) -> None:
         self.update_settings()
@@ -839,7 +894,7 @@ class PETsysGUIApp:
         # the format of "rawf_file_basename_{acq_time}s"
         try:
             acq_time_str = file_full_path.split("_")[-1].replace("s", "")
-            acq_time_str = int(acq_time_str) + SPLIT_TIME_OFFSET
+            acq_time_str = int(acq_time_str)
         except ValueError:
             self.log_message(
                 f"Error: Unable to extract acquisition time from the file name. Current file name is {file_full_path}"
@@ -854,15 +909,21 @@ class PETsysGUIApp:
         # Calculate the split time if needed
         split_time_param = ""
         if self.split_files > 1:
-            split_time = acq_time_str / self.split_files
+            split_time = acq_time_str / self.split_files + SPLIT_TIME_OFFSET
             split_time_param = f"--splitTime {split_time} "
 
         command = (
             f"cd {self.petsys_folder} && "
-            f"./convert_raw_to_group --config {self.config_file} -i {file_full_path} "
+            f"./convert_raw_to_group_fixed --config {self.config_file} -i {file_full_path} "
             f"-o {file_full_path}_groupFixed --writeBinaryFixed --writeMultipleHits 16 {split_time_param}"
         )
-        self.run_command(command)
+
+        def cleanup_callback():
+            self.cleanup_conversion_files(
+                self.output_data_folder, file_full_path + "_groupFixed"
+            )
+
+        self.run_command(command, callback=cleanup_callback)
 
     def generate_lm_file(self) -> None:
         """Generate LM file using the complete pipeline."""
@@ -873,6 +934,17 @@ class PETsysGUIApp:
 
         # Get settings
         input_file = self.lm_input_entry.get().strip()
+
+        if not input_file:
+            self.log_message("Please select a Basename LDAT file.")
+            return
+        # Get the folder and base name (remove extension and acquisition time part)
+        basename_folder = os.path.dirname(input_file)
+        base_name = os.path.basename(input_file).split(".")[0]
+        base_name = "_".join(base_name.split("_")[0:-1])
+        pattern = os.path.join(basename_folder, base_name + "*.ldat")
+        ldat_files = glob.glob(pattern)
+
         encal_file = self.lm_encal_entry.get().strip()
         cog_limits_file = self.lm_cog_limits_entry.get().strip()
 
@@ -882,9 +954,10 @@ class PETsysGUIApp:
 
         # Build the command using conda run -n for cleaner conda activation
         command = (
+            f"cd {self.process_petsys_folder} && "
             f"conda run -n process_petsys "
-            f"python {self.process_petsys_folder}/scripts_cornell/cornell_listmode_cog_fixed.py "
-            f"{self.process_config_file} {encal_file} {cog_limits_file} {input_file}"
+            f"python {self.process_petsys_folder}/scripts_gui/cornell_listmode_cog_fixed.py "
+            f"{self.process_config_file} {encal_file} {cog_limits_file} {' '.join(ldat_files)}"
         )
 
         self.log_message("Generating LM file...")
@@ -918,9 +991,10 @@ class PETsysGUIApp:
 
         # Build the command using conda run -n for cleaner conda activation
         command = (
+            f"cd {self.process_petsys_folder} && "
             f"conda run -n process_petsys "
-            f"python {self.process_petsys_folder}/scripts_cornell/cornell_slab_en_cal.py "
-            f"{self.process_config_file} {' '.join(ldat_files)}"
+            f"python {self.process_petsys_folder}/scripts_gui/cornell_slab_en_cal_fixed.py "
+            f"{self.process_config_file} {' '.join(ldat_files)} --coinc"
         )
         self.log_message("Generating Energy cal file...")
         self.run_command(
@@ -929,44 +1003,44 @@ class PETsysGUIApp:
         )
 
     def run_complete_pipeline(self) -> None:
-        """Execute the complete automated pipeline:
+        """Execute the complete automated pipeline sequentially:
         1. Acquire data (generates .rawf)
         2. Convert RAWF to LDAT (with MAX_SPLIT_FILES)
         3. Generate Energy Cal file (.encal)
         4. Generate LM file
+
+        Uses fixed pipeline paths and GUI filename for reproducible results.
         """
         self.update_settings()
 
-        # Validate all required settings
-        cog_limits_file = self.lm_cog_limits_entry.get().strip()
-
+        # Validate core settings needed for pipeline
         if not all(
             [
                 self.petsys_folder,
-                self.output_data_folder,
                 self.config_file,
                 self.process_petsys_folder,
                 self.process_config_file,
-                cog_limits_file,
             ]
         ):
             self.log_message(
-                "[WARNING] ERROR: Please configure all required settings before running the pipeline!"
-            )
-            self.log_message(
-                "   Required: PETsys Folder, Output Data Folder, Config File, "
-                "process_petsys Folder, YAML Config File, and COG Limits File"
+                "[ERROR] Pipeline requires: PETsys Folder, Config File, "
+                "process_petsys Folder, and YAML Config File"
             )
             return
 
         if not self.daqd_state.get():
-            self.log_message("[WARNING] ERROR: DAQD must be ON to run the pipeline!")
+            self.log_message("[ERROR] DAQD must be ON to run the pipeline!")
             return
 
         if not self.system_initialized:
-            self.log_message(
-                "[WARNING] ERROR: System must be initialized to run the pipeline!"
-            )
+            self.log_message("[ERROR] System must be initialized to run the pipeline!")
+            return
+
+        # Create pipeline directory if it doesn't exist
+        try:
+            os.makedirs(PIPELINE_DATA_DIR, exist_ok=True)
+        except Exception as e:
+            self.log_message(f"[ERROR] Could not create pipeline directory: {e}")
             return
 
         # Disable the pipeline button during execution
@@ -974,11 +1048,12 @@ class PETsysGUIApp:
 
         self.log_message("\n" + "=" * 80)
         self.log_message("[*] STARTING COMPLETE AUTOMATED PIPELINE")
+        self.log_message(f"[*] Using pipeline directory: {PIPELINE_DATA_DIR}")
+        self.log_message(f"[*] Using filename: {self.acq_file_name}")
         self.log_message("=" * 80 + "\n")
-
-        # Calculate file paths
-        file_basename = self.acq_file_name + f"_{int(self.acq_time)}s"
-        rawf_file = os.path.join(self.output_data_folder, file_basename + ".rawf")
+        # Store start time for timing
+        self.pipeline_start_time = time.time()
+        self.log_message(f"[TIMING] Pipeline started at {time.strftime('%H:%M:%S')}")
 
         # Set split files to maximum for optimal processing
         self.split_files = MAX_SPLIT_FILES
@@ -995,145 +1070,206 @@ class PETsysGUIApp:
         self.log_message(
             f"[ACQ] STEP 1/4: Acquiring data for {self.acq_time} seconds..."
         )
+        self.log_message(
+            f"[ACQ] Output will be saved to: {PIPELINE_DATA_DIR}/{self.acq_file_name}_{self.acq_time}s.rawf"
+        )
+
+        # Temporarily override output folder for pipeline
+        original_output_folder = self.output_data_folder
+        self.output_data_folder = PIPELINE_DATA_DIR
+        self.output_entry.delete(0, tk.END)
+        self.output_entry.insert(0, PIPELINE_DATA_DIR)
+
+        # Store original run_command
+        original_run_command = self.run_command
+
+        def run_command_step1_with_step2(
+            command_line: str, callback: Optional[Callable] = None
+        ) -> None:
+            def combined_callback():
+                if callback:
+                    callback()
+                # Call step 2 immediately after acquisition completes
+                self._pipeline_step2_convert(original_output_folder)
+
+            original_run_command(command_line, callback=combined_callback)
+
+        # Temporarily replace run_command for acquire_data
+        self.run_command = run_command_step1_with_step2
         self.acquire_data()
+        # Restore original run_command
+        self.run_command = original_run_command
 
-        # Schedule the next steps with delays to allow commands to complete
-        # We'll use a polling approach to check if files exist
-        def step2_convert_to_ldat():
-            # Wait for rawf file to exist
-            if not os.path.exists(rawf_file):
-                self.log_message("[WAIT] Waiting for acquisition to complete...")
-                self.root.after(2000, step2_convert_to_ldat)
-                return
+        # Schedule step 2 after acquisition completes
+        # Wait for the acquisition to finish based on acquisition time
+        # self.root.after(
+        #     int((self.acq_time + 5) * 1000),
+        #     lambda: self._pipeline_step2_convert(original_output_folder),
+        # )
 
-            self.log_message(f"\n[OK] Acquisition completed! Found: {rawf_file}")
+    def _pipeline_step2_convert(self, original_output_folder: str) -> None:
+        """Pipeline Step 2: Convert RAWF to LDAT"""
+        self.pipeline_status_label.configure(
+            text=f"[WAIT] Step 2/4: Converting to LDAT ({MAX_SPLIT_FILES} splits)...",
+            text_color="orange",
+        )
+
+        self.log_message(
+            f"\n[CONVERT] STEP 2/4: Converting RAWF to LDAT ({MAX_SPLIT_FILES} splits)..."
+        )
+
+        # Set proc_data_entry to the acquired rawf file
+        rawf_file = self.acq_file_name + f"_{int(self.acq_time)}s.rawf"
+        self.proc_data_entry.delete(0, tk.END)
+        self.proc_data_entry.insert(0, rawf_file)
+
+        # Store original run_command
+        original_run_command = self.run_command
+
+        def run_command_with_step3(
+            command_line: str, callback: Optional[Callable] = None
+        ) -> None:
+            def combined_callback():
+                if callback:
+                    callback()
+                # Schedule step 3 after a short delay
+                self.root.after(
+                    2000,
+                    lambda: self._pipeline_step3_energy_cal(original_output_folder),
+                )
+
+            original_run_command(command_line, callback=combined_callback)
+
+        # Temporarily replace run_command
+        self.run_command = run_command_with_step3
+        self.convert_raw_to_coincidence()
+        # Restore original run_command
+        self.run_command = original_run_command
+
+    def _pipeline_step3_energy_cal(self, original_output_folder: str) -> None:
+        """Pipeline Step 3: Generate Energy Calibration file"""
+        self.pipeline_status_label.configure(
+            text="[WAIT] Step 3/4: Generating energy calibration...",
+            text_color="orange",
+        )
+
+        self.log_message(f"\n[CAL] STEP 3/4: Generating Energy Calibration file...")
+
+        # Point to the first ldat file (00000001.ldat)
+        ldat_file = (
+            self.acq_file_name + f"_{int(self.acq_time)}s_coincFixed_00000001.ldat"
+        )
+        ldat_path = os.path.join(PIPELINE_DATA_DIR, ldat_file)
+
+        self.ldat_basename_entry.delete(0, tk.END)
+        self.ldat_basename_entry.insert(0, ldat_path)
+
+        # Store original run_command
+        original_run_command = self.run_command
+
+        def run_command_with_step4(
+            command_line: str, callback: Optional[Callable] = None
+        ) -> None:
+            def combined_callback():
+                if callback:
+                    callback()
+                # Schedule step 4 after a short delay
+                self.root.after(
+                    2000,
+                    lambda: self._pipeline_step4_generate_lm(original_output_folder),
+                )
+
+            original_run_command(command_line, callback=combined_callback)
+
+        # Temporarily replace run_command
+        self.run_command = run_command_with_step4
+        self.generate_energy_cal_file()
+        # Restore original run_command
+        self.run_command = original_run_command
+
+    def _pipeline_step4_generate_lm(self, original_output_folder: str) -> None:
+        """Pipeline Step 4: Generate LM file"""
+        self.pipeline_status_label.configure(
+            text="[WAIT] Step 4/4: Generating LM file...", text_color="orange"
+        )
+
+        self.log_message(f"\n[LM] STEP 4/4: Generating Listmode file...")
+
+        # Use first ldat file as input
+        ldat_file = (
+            self.acq_file_name + f"_{int(self.acq_time)}s_coincFixed_00000001.ldat"
+        )
+        ldat_path = os.path.join(PIPELINE_DATA_DIR, ldat_file)
+
+        self.lm_input_entry.delete(0, tk.END)
+        self.lm_input_entry.insert(0, ldat_path)
+
+        # Set encal file dynamically based on acq_file_name
+        encal_file = os.path.join(
+            PIPELINE_ENCAL_DIR,
+            f"{self.acq_file_name}_{int(self.acq_time)}s_coincFixed_fixed.encal",
+        )
+        self.lm_encal_entry.delete(0, tk.END)
+        self.lm_encal_entry.insert(0, encal_file)
+
+        # Set cog limits file
+        self.lm_cog_limits_entry.delete(0, tk.END)
+        self.lm_cog_limits_entry.insert(0, PIPELINE_COG_LIMITS_FILE)
+
+        # Store original run_command
+        original_run_command = self.run_command
+
+        def run_command_with_completion(
+            command_line: str, callback: Optional[Callable] = None
+        ) -> None:
+            def combined_callback():
+                if callback:
+                    callback()
+                # Pipeline complete
+                self.root.after(
+                    1000,
+                    lambda: self._pipeline_complete(original_output_folder),
+                )
+
+            original_run_command(command_line, callback=combined_callback)
+
+        # Temporarily replace run_command
+        self.run_command = run_command_with_completion
+        self.generate_lm_file()
+        # Restore original run_command
+        self.run_command = original_run_command
+
+    def _pipeline_complete(self, original_output_folder: str) -> None:
+        """Handle pipeline completion"""
+        # Calculate and log elapsed time
+        if hasattr(self, "pipeline_start_time"):
+            elapsed_time = time.time() - self.pipeline_start_time
+            elapsed_mins = elapsed_time / 60
             self.log_message(
-                f"[CONVERT] STEP 2/4: Converting RAWF to LDAT (splitting into {MAX_SPLIT_FILES} files)..."
+                f"[TIMING] Pipeline execution time: {elapsed_time:.1f}s ({elapsed_mins:.1f} minutes)"
             )
+        # Restore original settings
+        self.output_data_folder = original_output_folder
+        self.output_entry.delete(0, tk.END)
+        self.output_entry.insert(0, original_output_folder)
 
-            self.pipeline_status_label.configure(
-                text=f"[WAIT] Step 2/4: Converting to LDAT ({MAX_SPLIT_FILES} splits)...",
-                text_color="orange",
-            )
+        self.log_message("\n" + "=" * 80)
+        self.log_message("[SUCCESS] COMPLETE PIPELINE FINISHED SUCCESSFULLY!")
+        self.log_message(f"[SUCCESS] Results saved to: {PIPELINE_DATA_DIR}")
+        self.log_message(f"[SUCCESS] Using filename: {self.acq_file_name}")
+        self.log_message(
+            f"[SUCCESS] LM file generated in the pipeline directory: /data/nvmDisk/Cornell/data/LM/."
+        )
+        self.log_message("=" * 80 + "\n")
+        self.pipeline_status_label.configure(
+            text="[OK] Pipeline completed successfully!", text_color="green"
+        )
 
-            # Update the proc_data_entry to point to the acquired file
-            self.proc_data_entry.delete(0, tk.END)
-            self.proc_data_entry.insert(0, file_basename + ".rawf")
+        # Re-enable the pipeline button
+        self.pipeline_button.configure(state="normal")
 
-            # Convert to coincidence format
-            self.convert_raw_to_coincidence()
-
-            # Schedule next step
-            self.root.after(5000, step3_generate_energy_cal)
-
-        def step3_generate_energy_cal():
-            # Look for the generated ldat files
-            ldat_pattern = os.path.join(
-                self.output_data_folder, file_basename + "_coincFixed*.ldat"
-            )
-            ldat_files = glob.glob(ldat_pattern)
-
-            if not ldat_files:
-                self.log_message("[WAIT] Waiting for LDAT conversion to complete...")
-                self.root.after(3000, step3_generate_energy_cal)
-                return
-
-            self.log_message(
-                f"\n[OK] LDAT conversion completed! Found {len(ldat_files)} files"
-            )
-            self.log_message("[CAL] STEP 3/4: Generating Energy Calibration file...")
-
-            self.pipeline_status_label.configure(
-                text="[WAIT] Step 3/4: Generating energy calibration...",
-                text_color="orange",
-            )
-
-            # Update the ldat_basename_entry to point to one of the ldat files
-            self.ldat_basename_entry.delete(0, tk.END)
-            self.ldat_basename_entry.insert(0, ldat_files[0])
-
-            # Generate energy cal
-            self.generate_energy_cal_file()
-
-            # Schedule next step
-            self.root.after(5000, step4_generate_lm)
-
-        def step4_generate_lm():
-            # Look for the generated encal file
-            encal_pattern = os.path.join(self.output_data_folder, "*.encal")
-            encal_files = glob.glob(encal_pattern)
-
-            # Find the most recent encal file
-            if not encal_files:
-                self.log_message(
-                    "[WAIT] Waiting for Energy Cal generation to complete..."
-                )
-                self.root.after(3000, step4_generate_lm)
-                return
-
-            # Get the most recent encal file
-            encal_file = max(encal_files, key=os.path.getmtime)
-
-            # Find the first ldat file for LM generation
-            ldat_pattern = os.path.join(
-                self.output_data_folder, file_basename + "_coincFixed_00000000.ldat"
-            )
-            ldat_file = glob.glob(ldat_pattern)
-
-            if not ldat_file:
-                self.log_message(
-                    "[WARNING] ERROR: Could not find LDAT file for LM generation!"
-                )
-                pipeline_complete(False)
-                return
-
-            self.log_message(f"\n[OK] Energy Cal completed! Using: {encal_file}")
-            self.log_message("[LM] STEP 4/4: Generating Listmode file...")
-
-            self.pipeline_status_label.configure(
-                text="[WAIT] Step 4/4: Generating LM file...", text_color="orange"
-            )
-
-            # Update LM generation entries
-            self.lm_input_entry.delete(0, tk.END)
-            self.lm_input_entry.insert(0, ldat_file[0])
-
-            self.lm_encal_entry.delete(0, tk.END)
-            self.lm_encal_entry.insert(0, encal_file)
-
-            # Generate LM file
-            self.generate_lm_file()
-
-            # Schedule completion check
-            self.root.after(5000, lambda: pipeline_complete(True))
-
-        def pipeline_complete(success):
-            if success:
-                self.log_message("\n" + "=" * 80)
-                self.log_message("[SUCCESS] COMPLETE PIPELINE FINISHED SUCCESSFULLY!")
-                self.log_message("=" * 80 + "\n")
-                self.pipeline_status_label.configure(
-                    text="[OK] Pipeline completed successfully!", text_color="green"
-                )
-            else:
-                self.log_message("\n" + "=" * 80)
-                self.log_message("[ERROR] PIPELINE ENCOUNTERED AN ERROR")
-                self.log_message("=" * 80 + "\n")
-                self.pipeline_status_label.configure(
-                    text="[FAIL] Pipeline failed - check logs", text_color="red"
-                )
-
-            # Re-enable the pipeline button
-            self.pipeline_button.configure(state="normal")
-
-            # Clear status after 10 seconds
-            self.root.after(
-                10000, lambda: self.pipeline_status_label.configure(text="")
-            )
-
-        # Start the pipeline chain
-        # Wait a bit for acquire to start, then begin monitoring
-        self.root.after(int(self.acq_time * 1000) + 3000, step2_convert_to_ldat)
+        # Clear status after 10 seconds
+        self.root.after(10000, lambda: self.pipeline_status_label.configure(text=""))
 
     def init_system(self) -> None:
         self.update_settings()
@@ -1150,6 +1286,7 @@ class PETsysGUIApp:
             return
 
         command = f"cd {self.petsys_folder} && ./init_system"
+
         self.log_message("Initializing system...")
 
         def task():
