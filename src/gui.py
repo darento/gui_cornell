@@ -22,6 +22,7 @@ MAX_SPLIT_FILES: int = max(1, os.cpu_count() - 2)
 PIPELINE_DATA_DIR: str = "/data/nvmDisk/Cornell/data/FullPipeline"
 PIPELINE_ENCAL_DIR: str = "/home/sie/sw/process_petsys/encal_files"
 PIPELINE_COG_LIMITS_FILE: str = "/home/sie/sw/process_petsys/cog_limits.txt"
+PIPELINE_DOI_LIMITS_FILE: str = "/home/sie/sw/process_petsys/doi_limits.txt"
 
 
 def clean_tmp_and_shm() -> None:
@@ -94,6 +95,7 @@ class PETsysGUIApp:
         self.lm_input_file: str = ""
         self.lm_encal_file: str = ""
         self.lm_cog_limits_file: str = ""
+        self.lm_doi_limits_file: str = ""
 
     def create_labeled_frame(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
         """Create a frame with a bold title label at the top."""
@@ -424,6 +426,19 @@ class PETsysGUIApp:
             width=100,
         ).grid(row=3, column=2, padx=5, pady=2)
 
+        # DOI limits file
+        ctk.CTkLabel(lm_settings_frame, text="DOI Limits File:").grid(
+            row=4, column=0, sticky="e", padx=5, pady=2
+        )
+        self.lm_doi_limits_entry = ctk.CTkEntry(lm_settings_frame)
+        self.lm_doi_limits_entry.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(
+            lm_settings_frame,
+            text="Browse",
+            command=self.browse_lm_doi_limits,
+            width=100,
+        ).grid(row=4, column=2, padx=5, pady=2)
+
         # Generate button
         generate_frame = ctk.CTkFrame(self.lm_generation_tab, fg_color="transparent")
         generate_frame.pack(padx=10, pady=10)
@@ -506,6 +521,16 @@ class PETsysGUIApp:
         if filename:
             self.lm_cog_limits_entry.delete(0, tk.END)
             self.lm_cog_limits_entry.insert(0, filename)
+
+    def browse_lm_doi_limits(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="Select DOI Limits File",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            initialdir="/home/sie/sw/process_petsys/",
+        )
+        if filename:
+            self.lm_doi_limits_entry.delete(0, tk.END)
+            self.lm_doi_limits_entry.insert(0, filename)
 
     def browse_rawf_file(self) -> None:
         filename = filedialog.askopenfilename(
@@ -947,8 +972,9 @@ class PETsysGUIApp:
 
         encal_file = self.lm_encal_entry.get().strip()
         cog_limits_file = self.lm_cog_limits_entry.get().strip()
+        doi_limits_file = self.lm_doi_limits_entry.get().strip()
 
-        if not all([input_file, encal_file, cog_limits_file]):
+        if not all([input_file, encal_file, cog_limits_file, doi_limits_file]):
             self.log_message("Please provide all required files for LM generation.")
             return
 
@@ -956,8 +982,8 @@ class PETsysGUIApp:
         command = (
             f"cd {self.process_petsys_folder} && "
             f"conda run -n process_petsys "
-            f"python {self.process_petsys_folder}/scripts_gui/cornell_listmode_cog_fixed.py "
-            f"{self.process_config_file} {encal_file} {cog_limits_file} {' '.join(ldat_files)}"
+            f"python {self.process_petsys_folder}/scripts_gui/cornell_listmode_cog_fixed_position.py "
+            f"{self.process_config_file} {encal_file} {cog_limits_file} {doi_limits_file} {' '.join(ldat_files)}"
         )
 
         self.log_message("Generating LM file...")
@@ -981,9 +1007,16 @@ class PETsysGUIApp:
         base_name = "_".join(base_name.split("_")[0:-1])
         pattern = os.path.join(basename_folder, base_name + "*.ldat")
         ldat_files = glob.glob(pattern)
+        cog_limits_file = self.lm_cog_limits_entry.get().strip()
 
         if not ldat_files:
             self.log_message(f"No LDAT files found matching pattern '{pattern}'.")
+            return
+
+        if not cog_limits_file:
+            self.log_message(
+                "Please provide a COG Limits file for Energy cal generation."
+            )
             return
 
         for f in ldat_files:
@@ -993,8 +1026,8 @@ class PETsysGUIApp:
         command = (
             f"cd {self.process_petsys_folder} && "
             f"conda run -n process_petsys "
-            f"python {self.process_petsys_folder}/scripts_gui/cornell_slab_en_cal_fixed.py "
-            f"{self.process_config_file} {' '.join(ldat_files)} --coinc"
+            f"python {self.process_petsys_folder}/scripts_gui/cornell_slab_en_cal_fixed_position.py "
+            f"{self.process_config_file} {cog_limits_file} {' '.join(ldat_files)} --coinc"
         )
         self.log_message("Generating Energy cal file...")
         self.run_command(
@@ -1164,6 +1197,9 @@ class PETsysGUIApp:
         self.ldat_basename_entry.delete(0, tk.END)
         self.ldat_basename_entry.insert(0, ldat_path)
 
+        self.lm_cog_limits_entry.delete(0, tk.END)
+        self.lm_cog_limits_entry.insert(0, PIPELINE_COG_LIMITS_FILE)
+
         # Store original run_command
         original_run_command = self.run_command
 
@@ -1207,7 +1243,7 @@ class PETsysGUIApp:
         # Set encal file dynamically based on acq_file_name
         encal_file = os.path.join(
             PIPELINE_ENCAL_DIR,
-            f"{self.acq_file_name}_{int(self.acq_time)}s_coincFixed_fixed.encal",
+            f"{self.acq_file_name}_{int(self.acq_time)}s_coincFixed_position_5regions.encal",
         )
         self.lm_encal_entry.delete(0, tk.END)
         self.lm_encal_entry.insert(0, encal_file)
@@ -1215,6 +1251,10 @@ class PETsysGUIApp:
         # Set cog limits file
         self.lm_cog_limits_entry.delete(0, tk.END)
         self.lm_cog_limits_entry.insert(0, PIPELINE_COG_LIMITS_FILE)
+
+        # Set doi limits file
+        self.lm_doi_limits_entry.delete(0, tk.END)
+        self.lm_doi_limits_entry.insert(0, PIPELINE_DOI_LIMITS_FILE)
 
         # Store original run_command
         original_run_command = self.run_command
