@@ -92,10 +92,9 @@ class PETsysGUIApp:
         self.process_petsys_folder: str = ""
         self.process_config_file: str = ""
 
-        self.lm_input_file: str = ""
-        self.lm_encal_file: str = ""
-        self.lm_cog_limits_file: str = ""
         self.lm_doi_limits_file: str = ""
+        self.current_process: Optional[subprocess.Popen] = None
+        self.stop_requested: bool = False
 
     def create_labeled_frame(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
         """Create a frame with a bold title label at the top."""
@@ -285,6 +284,20 @@ class PETsysGUIApp:
         )
         self.pipeline_button.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
 
+        # Stop button below the pipeline button
+        self.stop_button = ctk.CTkButton(
+            pipeline_frame,
+            text="STOP",
+            command=self.stop_action,
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            fg_color="#e74c3c",  # Vibrant red
+            hover_color="#c0392b",  # Darker red on hover
+            text_color="white",
+            state="disabled",
+        )
+        self.stop_button.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
+
         # Status label for pipeline progress
         self.pipeline_status_label = ctk.CTkLabel(
             pipeline_frame,
@@ -293,7 +306,7 @@ class PETsysGUIApp:
             text_color="orange",
         )
         self.pipeline_status_label.grid(
-            row=3, column=0, padx=20, pady=(0, 10), sticky="ew"
+            row=4, column=0, padx=20, pady=(0, 10), sticky="ew"
         )
 
     def setup_rawf_to_ldat_tab(self) -> None:
@@ -669,20 +682,28 @@ class PETsysGUIApp:
         self, command_line: str, callback: Optional[Callable] = None
     ) -> None:
         self.log_message("Executing: " + command_line)
+        self.stop_button.configure(state="normal")
 
         def task():
             try:
+                self.stop_requested = False
                 process = subprocess.Popen(
                     command_line,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     shell=True,
                     text=True,
+                    preexec_fn=os.setsid if os.name != "nt" else None,
                 )
+                self.current_process = process
                 output, error = process.communicate()
                 full_output = output + "\n" + error
             except Exception as e:
                 full_output = f"Error: {e}"
+            finally:
+                self.current_process = None
+
+            self.root.after(0, lambda: self.stop_button.configure(state="disabled"))
             self.root.after(
                 0, lambda: self.output_text.insert(tk.END, full_output + "\n")
             )
@@ -773,11 +794,37 @@ class PETsysGUIApp:
         if self.daqd_process and self.daqd_process.poll() is None:
             try:
                 # Kill the entire process group.
-                os.killpg(os.getpgid(self.daqd_process.pid), signal.SIGTERM)
+                if os.name != "nt":
+                    os.killpg(os.getpgid(self.daqd_process.pid), signal.SIGTERM)
+                else:
+                    self.daqd_process.terminate()
                 self.log_daqd("DAQD process terminated.")
             except Exception as e:
                 self.log_daqd(f"Error terminating DAQD: {e}")
             self.daqd_process = None
+
+    def stop_action(self) -> None:
+        """Interrupt the current process and signal the pipeline to stop."""
+        self.stop_requested = True
+        self.log_message("[STOP] Stop requested by user.")
+
+        if self.current_process and self.current_process.poll() is None:
+            try:
+                if os.name != "nt":
+                    os.killpg(os.getpgid(self.current_process.pid), signal.SIGTERM)
+                else:
+                    self.current_process.terminate()
+                self.log_message("[STOP] Current process interrupted.")
+            except Exception as e:
+                self.log_message(f"[STOP] Error interrupting process: {e}")
+
+        self.pipeline_status_label.configure(
+            text="[STOP] Extraction/Processing stopped by user.", text_color="red"
+        )
+        # Re-enable pipeline and other buttons if necessary
+        self.pipeline_button.configure(state="normal")
+        self.stop_button.configure(state="disabled")
+        self.acquire_button.configure(state="normal")
 
     def log_daqd(self, message: str) -> None:
         def append():
@@ -1122,6 +1169,10 @@ class PETsysGUIApp:
             def combined_callback():
                 if callback:
                     callback()
+                # Check for stop request before proceeding to step 2
+                if self.stop_requested:
+                    self.log_message("[STOP] Pipeline aborted after Step 1.")
+                    return
                 # Call step 2 immediately after acquisition completes
                 self._pipeline_step2_convert(original_output_folder)
 
@@ -1165,6 +1216,10 @@ class PETsysGUIApp:
             def combined_callback():
                 if callback:
                     callback()
+                # Check for stop request before proceeding to step 3
+                if self.stop_requested:
+                    self.log_message("[STOP] Pipeline aborted after Step 2.")
+                    return
                 # Schedule step 3 after a short delay
                 self.root.after(
                     2000,
@@ -1209,6 +1264,10 @@ class PETsysGUIApp:
             def combined_callback():
                 if callback:
                     callback()
+                # Check for stop request before proceeding to step 4
+                if self.stop_requested:
+                    self.log_message("[STOP] Pipeline aborted after Step 3.")
+                    return
                 # Schedule step 4 after a short delay
                 self.root.after(
                     2000,
@@ -1265,6 +1324,10 @@ class PETsysGUIApp:
             def combined_callback():
                 if callback:
                     callback()
+                # Check for stop request before final completion
+                if self.stop_requested:
+                    self.log_message("[STOP] Pipeline aborted after Step 4.")
+                    return
                 # Pipeline complete
                 self.root.after(
                     1000,
@@ -1328,30 +1391,7 @@ class PETsysGUIApp:
         command = f"cd {self.petsys_folder} && ./init_system"
 
         self.log_message("Initializing system...")
-
-        def task():
-            try:
-                process = subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=True,
-                    text=True,
-                )
-                output, error = process.communicate()
-                full_output = output + "\n" + error
-
-                # Enable the acquire button and show initialization message
-                self.root.after(0, self.after_init)
-
-            except Exception as e:
-                full_output = f"Error during initialization: {e}"
-
-            self.root.after(
-                0, lambda: self.output_text.insert(tk.END, full_output + "\n")
-            )
-
-        threading.Thread(target=task, daemon=True).start()
+        self.run_command(command, callback=self.after_init)
 
     def after_init(self) -> None:
         self.system_initialized = True
