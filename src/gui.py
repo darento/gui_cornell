@@ -27,10 +27,20 @@ PIPELINE_DOI_LIMITS_FILE: str = "/home/sie/sw/process_petsys/doi_limits.txt"
 
 def clean_tmp_and_shm() -> None:
     """Remove temporary socket and shared memory files."""
-    if os.path.exists("/tmp/d.sock"):
-        subprocess.call("rm /tmp/d.sock", shell=True)
-    if os.path.exists("/dev/shm/daqd_shm"):
-        subprocess.call("rm /dev/shm/daqd_shm", shell=True)
+    sock_path = Path("/tmp/d.sock")
+    shm_path = Path("/dev/shm/daqd_shm")
+
+    if sock_path.exists():
+        try:
+            sock_path.unlink()
+        except OSError:
+            subprocess.call(["rm", str(sock_path)])
+
+    if shm_path.exists():
+        try:
+            shm_path.unlink()
+        except OSError:
+            subprocess.call(["rm", str(shm_path)])
 
 
 class PETsysGUIApp:
@@ -448,6 +458,31 @@ class PETsysGUIApp:
 
         except Exception as e:
             self.log_message(f"Error loading onco_logo.jpeg: {e}")
+
+    def _browse(
+        self,
+        entry: ctk.CTkEntry,
+        title: str,
+        mode: str = "file",
+        initialdir: Optional[str] = None,
+        filetypes: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
+        """Generic helper for file/directory browsing."""
+        if filetypes is None:
+            filetypes = [("All Files", "*.*")]
+
+        if mode == "file":
+            filename = filedialog.askopenfilename(
+                title=title, filetypes=filetypes, initialdir=initialdir
+            )
+        else:
+            filename = filedialog.askdirectory(
+                title=title, initialdir=initialdir, mustexist=True
+            )
+
+        if filename:
+            entry.delete(0, tk.END)
+            entry.insert(0, filename)
 
     # All the browse methods for file selection
     def browse_lm_input(self) -> None:
