@@ -1,12 +1,12 @@
-import glob
 import os
+from pathlib import Path
 import signal
 import subprocess
 import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Tuple
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
@@ -43,26 +43,31 @@ class PETsysGUIApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.initialize_variables()
+        self._setup_ui()
 
-        self.tabview = ctk.CTkTabview(root)
+    def _setup_ui(self) -> None:
+        """Create the overall UI structure."""
+        self.tabview = ctk.CTkTabview(self.root)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=5)
 
-        self.tabview.add("System Setup & Acquisition")
-        self.tabview.add("RAWF to LDAT Conversion")
-        self.tabview.add("LDAT Processing")
-        self.tabview.add("LM File Generation")
+        tabs = [
+            ("System Setup & Acquisition", "setup_tab"),
+            ("RAWF to LDAT Conversion", "rawf_to_ldat_tab"),
+            ("LDAT Processing", "ldat_proc_tab"),
+            ("LM File Generation", "lm_generation_tab"),
+        ]
 
-        self.setup_tab = self.tabview.tab("System Setup & Acquisition")
-        self.rawf_to_ldat_tab = self.tabview.tab("RAWF to LDAT Conversion")
-        self.ldat_proc_tab = self.tabview.tab("LDAT Processing")
-        self.lm_generation_tab = self.tabview.tab("LM File Generation")
+        for label, attr in tabs:
+            self.tabview.add(label)
+            setattr(self, attr, self.tabview.tab(label))
 
         self.setup_acquisition_tab()
         self.setup_rawf_to_ldat_tab()
         self.setup_ldat_proc_tab()
         self.setup_lm_generation_tab()
 
-        self.output_frame = ctk.CTkFrame(root)
+        # Output Log area at bottom
+        self.output_frame = ctk.CTkFrame(self.root)
         self.output_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         ctk.CTkLabel(self.output_frame, text="Output Log:").pack(
@@ -107,10 +112,27 @@ class PETsysGUIApp:
 
     def setup_acquisition_tab(self) -> None:
         # --- Settings Frame ---
-        settings_frame = self.create_labeled_frame(self.setup_tab, "Settings")
-        settings_frame.pack(padx=10, pady=5, fill="x")
+        self._setup_settings_frame(self.setup_tab)
 
-        # Grid configuration for settings_frame
+        # --- Two-column layout: Left (Control) | Right (Pipeline) ---
+        columns_container = ctk.CTkFrame(self.setup_tab, fg_color="transparent")
+        columns_container.pack(padx=10, pady=5, fill="both", expand=True)
+        columns_container.grid_columnconfigure(0, weight=1)
+        columns_container.grid_columnconfigure(1, weight=1)
+
+        # LEFT COLUMN
+        left_column = ctk.CTkFrame(columns_container, fg_color="transparent")
+        left_column.grid(row=0, column=0, padx=(0, 5), sticky="nsew")
+        self._setup_left_column(left_column)
+
+        # RIGHT COLUMN
+        right_column = ctk.CTkFrame(columns_container, fg_color="transparent")
+        right_column.grid(row=0, column=1, padx=(5, 0), sticky="nsew")
+        self._setup_right_column(right_column)
+
+    def _setup_settings_frame(self, parent: ctk.CTkFrame) -> None:
+        settings_frame = self.create_labeled_frame(parent, "Settings")
+        settings_frame.pack(padx=10, pady=5, fill="x")
         settings_frame.grid_columnconfigure(1, weight=1)
 
         # PETsys Folder
@@ -143,7 +165,7 @@ class PETsysGUIApp:
             settings_frame, text="Browse", command=self.browse_config_file, width=100
         ).grid(row=3, column=2, padx=5, pady=2)
 
-        # Acquisition file name
+        # Acquisition file name & Time
         ctk.CTkLabel(settings_frame, text="Acquisition File Name:").grid(
             row=4, column=0, sticky="e", padx=5, pady=2
         )
@@ -151,7 +173,6 @@ class PETsysGUIApp:
         self.acq_file_entry.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
         self.acq_file_entry.insert(0, "data_file")
 
-        # Acquisition Time
         ctk.CTkLabel(settings_frame, text="Acq. Time (s):").grid(
             row=5, column=0, sticky="e", padx=5, pady=2
         )
@@ -159,240 +180,189 @@ class PETsysGUIApp:
         self.acq_entry.grid(row=5, column=1, sticky="w", padx=5, pady=2)
         self.acq_entry.insert(0, "10")
 
-        # --- Processing Settings for PETSYS Scripts ---
-        proc_settings_frame2 = self.create_labeled_frame(
-            settings_frame, "Process LDAT files Settings"
-        )
-        proc_settings_frame2.grid(
-            row=6, column=0, columnspan=3, padx=5, pady=10, sticky="ew"
-        )
-        proc_settings_frame2.grid_columnconfigure(1, weight=1)
+        # Nested Process LDAT settings
+        self._setup_process_ldat_settings(settings_frame)
 
-        # Process PETSYS Folder
-        ctk.CTkLabel(proc_settings_frame2, text="'process_petsys' sw Folder:").grid(
+    def _setup_process_ldat_settings(self, parent: ctk.CTkFrame) -> None:
+        proc_frame = self.create_labeled_frame(parent, "Process LDAT files Settings")
+        proc_frame.grid(row=6, column=0, columnspan=3, padx=5, pady=10, sticky="ew")
+        proc_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(proc_frame, text="'process_petsys' sw Folder:").grid(
             row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.process_petsys_entry = ctk.CTkEntry(proc_settings_frame2)
+        self.process_petsys_entry = ctk.CTkEntry(proc_frame)
         self.process_petsys_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkButton(
-            proc_settings_frame2,
+            proc_frame,
             text="Browse",
             command=self.browse_process_petsys_folder,
             width=100,
         ).grid(row=1, column=2, padx=5, pady=2)
 
-        # Processing Config File
-        ctk.CTkLabel(proc_settings_frame2, text="YAML Config File:").grid(
+        ctk.CTkLabel(proc_frame, text="YAML Config File:").grid(
             row=2, column=0, sticky="e", padx=5, pady=2
         )
-        self.process_config_entry = ctk.CTkEntry(proc_settings_frame2)
+        self.process_config_entry = ctk.CTkEntry(proc_frame)
         self.process_config_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkButton(
-            proc_settings_frame2,
+            proc_frame,
             text="Browse",
             command=self.browse_process_config_file,
             width=100,
         ).grid(row=2, column=2, padx=5, pady=2)
 
-        # --- Create two-column layout: Left (System Control + Data Acquisition) | Right (Pipeline) ---
-        columns_container = ctk.CTkFrame(self.setup_tab, fg_color="transparent")
-        columns_container.pack(padx=10, pady=5, fill="both", expand=True)
-        columns_container.grid_columnconfigure(0, weight=1)
-        columns_container.grid_columnconfigure(1, weight=1)
+    def _setup_left_column(self, parent: ctk.CTkFrame) -> None:
+        # System Control
+        ctrl_frame = self.create_labeled_frame(parent, "System Control")
+        ctrl_frame.pack(padx=10, pady=5, fill="x")
 
-        # LEFT COLUMN: System Control and Data Acquisition
-        left_column = ctk.CTkFrame(columns_container, fg_color="transparent")
-        left_column.grid(row=0, column=0, padx=(0, 5), sticky="nsew")
-
-        # --- System Control Frame ---
-        control_frame = self.create_labeled_frame(left_column, "System Control")
-        control_frame.pack(padx=10, pady=5, fill="x")
-
-        # DAQD Toggle
         self.daqd_state = tk.BooleanVar(value=False)
         self.daqd_toggle = ctk.CTkCheckBox(
-            control_frame,
+            ctrl_frame,
             text="DAQD OFF",
             variable=self.daqd_state,
             command=self.toggle_daqd,
-            onvalue=True,
-            offvalue=False,
         )
         self.daqd_toggle.grid(row=1, column=0, padx=20, pady=10)
 
-        # System Initialization
         self.init_system_button = ctk.CTkButton(
-            control_frame, text="Initialize System", command=self.init_system
+            ctrl_frame, text="Initialize System", command=self.init_system
         )
         self.init_system_button.grid(row=1, column=1, padx=20, pady=10)
 
-        # --- Acquisition Frame ---
-        acq_frame = self.create_labeled_frame(left_column, "Data Acquisition")
+        # Data Acquisition
+        acq_frame = self.create_labeled_frame(parent, "Data Acquisition")
         acq_frame.pack(padx=10, pady=5, fill="x")
 
-        # Hardware Trigger flag (checkbutton)
         self.hw_trigger = tk.BooleanVar(value=False)
-        self.hw_trigger_cb = ctk.CTkCheckBox(
-            acq_frame,
-            text="Enable Hardware Trigger",
-            variable=self.hw_trigger,
-            onvalue=True,
-            offvalue=False,
-        )
-        self.hw_trigger_cb.grid(row=1, column=0, padx=20, pady=10)
+        ctk.CTkCheckBox(
+            acq_frame, text="Enable Hardware Trigger", variable=self.hw_trigger
+        ).grid(row=1, column=0, padx=20, pady=10)
 
-        # Acquire button
         self.acquire_button = ctk.CTkButton(
             acq_frame, text="Acquire Data", command=self.acquire_data, state="disabled"
         )
         self.acquire_button.grid(row=1, column=1, padx=20, pady=10)
 
-        # RIGHT COLUMN: Complete Pipeline
-        right_column = ctk.CTkFrame(columns_container, fg_color="transparent")
-        right_column.grid(row=0, column=1, padx=(5, 0), sticky="nsew")
+    def _setup_right_column(self, parent: ctk.CTkFrame) -> None:
+        pipe_frame = self.create_labeled_frame(parent, "Complete Automated Pipeline")
+        pipe_frame.pack(padx=10, pady=5, fill="both", expand=True)
+        pipe_frame.grid_columnconfigure(0, weight=1)
 
-        # --- Complete Pipeline Frame (Fancy Automation Button) ---
-        pipeline_frame = self.create_labeled_frame(
-            right_column, "Complete Automated Pipeline"
-        )
-        pipeline_frame.pack(padx=10, pady=5, fill="both", expand=True)
+        ctk.CTkLabel(
+            pipe_frame,
+            text="Execute complete workflow:\nAcquire → Convert → Calibrate → Generate LM",
+            font=ctk.CTkFont(size=12),
+        ).grid(row=1, column=0, padx=20, pady=10)
 
-        # Configure grid column to expand
-        pipeline_frame.grid_columnconfigure(0, weight=1)
-
-        # Add description
-        desc_label = ctk.CTkLabel(
-            pipeline_frame,
-            text="Execute the complete workflow:\nAcquire → Convert → Calibrate → Generate LM",
-            font=ctk.CTkFont(size=12, weight="normal"),
-            text_color="gray30",  # Darker gray for better readability
-            justify="center",
-        )
-        desc_label.grid(row=1, column=0, padx=20, pady=(10, 10), sticky="ew")
-
-        # Big fancy pipeline button
         self.pipeline_button = ctk.CTkButton(
-            pipeline_frame,
+            pipe_frame,
             text="> RUN COMPLETE PIPELINE",
             command=self.run_complete_pipeline,
             font=ctk.CTkFont(size=16, weight="bold"),
             height=50,
-            fg_color="#2ecc71",  # Vibrant green when enabled
-            hover_color="#27ae60",  # Darker green on hover
-            text_color="white",  # White text for better contrast
+            fg_color="#2ecc71",
+            hover_color="#27ae60",
             state="disabled",
         )
         self.pipeline_button.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
 
-        # Stop button below the pipeline button
         self.stop_button = ctk.CTkButton(
-            pipeline_frame,
+            pipe_frame,
             text="STOP",
             command=self.stop_action,
             font=ctk.CTkFont(size=16, weight="bold"),
             height=50,
-            fg_color="#e74c3c",  # Vibrant red
-            hover_color="#c0392b",  # Darker red on hover
-            text_color="white",
+            fg_color="#e74c3c",
+            hover_color="#c0392b",
             state="disabled",
         )
         self.stop_button.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
 
-        # Status label for pipeline progress
         self.pipeline_status_label = ctk.CTkLabel(
-            pipeline_frame,
-            text="",
-            font=ctk.CTkFont(size=10),
-            text_color="orange",
+            pipe_frame, text="", font=ctk.CTkFont(size=11), text_color="orange"
         )
         self.pipeline_status_label.grid(
             row=4, column=0, padx=20, pady=(0, 10), sticky="ew"
         )
 
     def setup_rawf_to_ldat_tab(self) -> None:
-        proc_file_frame = self.create_labeled_frame(
+        # Data Selection
+        file_frame = self.create_labeled_frame(
             self.rawf_to_ldat_tab, "Data File Selection"
         )
-        proc_file_frame.pack(padx=10, pady=5, fill="x")
-        proc_file_frame.grid_columnconfigure(1, weight=1)
+        file_frame.pack(padx=10, pady=5, fill="x")
+        file_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(proc_file_frame, text="Data File:").grid(
+        ctk.CTkLabel(file_frame, text="Data File:").grid(
             row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.proc_data_entry = ctk.CTkEntry(proc_file_frame)
+        self.proc_data_entry = ctk.CTkEntry(file_frame)
         self.proc_data_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # Set default to acquisition file
         if not self.proc_data_entry.get().strip():
             self.proc_data_entry.insert(0, "rawf_file_basename")
         ctk.CTkButton(
-            proc_file_frame, text="Browse", command=self.browse_rawf_file, width=100
+            file_frame, text="Browse", command=self.browse_rawf_file, width=100
         ).grid(row=1, column=2, padx=5, pady=2)
 
-        # --- Processing Settings Frame ---
-        proc_settings_frame = self.create_labeled_frame(
+        # Settings
+        settings_frame = self.create_labeled_frame(
             self.rawf_to_ldat_tab, "Processing Settings"
         )
-        proc_settings_frame.pack(padx=10, pady=5, fill="x")
+        settings_frame.pack(padx=10, pady=5, fill="x")
 
-        # Number of Split Files
-        ctk.CTkLabel(proc_settings_frame, text="Number of Split Files:").grid(
+        ctk.CTkLabel(settings_frame, text="Number of Split Files:").grid(
             row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.split_entry = ctk.CTkEntry(proc_settings_frame, width=100)
+        self.split_entry = ctk.CTkEntry(settings_frame, width=100)
         self.split_entry.grid(row=1, column=1, sticky="w", padx=5, pady=2)
         self.split_entry.insert(0, "1")
-
-        # Warning label for max split files
         ctk.CTkLabel(
-            proc_settings_frame,
-            text=f"(Max: {MAX_SPLIT_FILES} = CPU cores - 2)",
+            settings_frame,
+            text=f"(Max: {MAX_SPLIT_FILES})",
             text_color="red",
             font=ctk.CTkFont(size=10),
         ).grid(row=1, column=2, sticky="w", padx=5, pady=2)
 
-        # --- Conversion Buttons Frame ---
-        conversion_frame = self.create_labeled_frame(
+        # Options
+        options_frame = self.create_labeled_frame(
             self.rawf_to_ldat_tab, "Conversion Options"
         )
-        conversion_frame.pack(padx=10, pady=5, fill="x")
+        options_frame.pack(padx=10, pady=5, fill="x")
 
-        # Convert buttons
         self.convert_to_coincidence_button = ctk.CTkButton(
-            conversion_frame,
+            options_frame,
             text="Convert Raw to Coincidence",
             command=self.convert_raw_to_coincidence,
         )
         self.convert_to_coincidence_button.grid(row=1, column=0, padx=20, pady=10)
 
         self.convert_to_group_button = ctk.CTkButton(
-            conversion_frame,
+            options_frame,
             text="Convert Raw to Group",
             command=self.convert_raw_to_group,
         )
         self.convert_to_group_button.grid(row=1, column=1, padx=20, pady=10)
 
     def setup_ldat_proc_tab(self) -> None:
-        proc_frame = self.create_labeled_frame(
+        frame = self.create_labeled_frame(
             self.ldat_proc_tab, "Energy cal file generation"
         )
-        proc_frame.pack(padx=10, pady=5, fill="x")
-        proc_frame.grid_columnconfigure(1, weight=1)
+        frame.pack(padx=10, pady=5, fill="x")
+        frame.grid_columnconfigure(1, weight=1)
 
-        # Label and entry for Basename LDAT File selection
-        ctk.CTkLabel(proc_frame, text="Basename LDAT File:").grid(
+        ctk.CTkLabel(frame, text="Basename LDAT File:").grid(
             row=1, column=0, sticky="e", padx=5, pady=2
         )
-        self.ldat_basename_entry = ctk.CTkEntry(proc_frame)
+        self.ldat_basename_entry = ctk.CTkEntry(frame)
         self.ldat_basename_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkButton(
-            proc_frame, text="Browse", command=self.browse_ldat_basename, width=100
+            frame, text="Browse", command=self.browse_ldat_basename, width=100
         ).grid(row=1, column=2, padx=5, pady=2)
 
-        # Button to launch the energy cal generation python script
         self.process_ldat_button = ctk.CTkButton(
-            proc_frame,
-            text="Create Energy cal file",
-            command=self.generate_energy_cal_file,
+            frame, text="Create Energy cal file", command=self.generate_energy_cal_file
         )
         self.process_ldat_button.grid(row=2, column=0, columnspan=3, padx=20, pady=10)
 
@@ -403,63 +373,37 @@ class PETsysGUIApp:
         lm_settings_frame.pack(padx=10, pady=5, fill="x")
         lm_settings_frame.grid_columnconfigure(1, weight=1)
 
-        # Input LDAT file (default is the acquisition file)
-        ctk.CTkLabel(lm_settings_frame, text="Input LDAT File:").grid(
-            row=1, column=0, sticky="e", padx=5, pady=2
-        )
-        self.lm_input_entry = ctk.CTkEntry(lm_settings_frame)
-        self.lm_input_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # Set default to acquisition file if empty
-        if not self.lm_input_entry.get().strip():
-            self.lm_input_entry.insert(0, "ldat_file_basename")
-        ctk.CTkButton(
-            lm_settings_frame, text="Browse", command=self.browse_lm_input, width=100
-        ).grid(row=1, column=2, padx=5, pady=2)
+        # File selections
+        fields = [
+            (
+                "Input LDAT File:",
+                "lm_input_entry",
+                self.browse_lm_input,
+                "ldat_file_basename",
+            ),
+            ("System Energy cal file:", "lm_encal_entry", self.browse_lm_encal, ""),
+            ("COG Limits File:", "lm_cog_limits_entry", self.browse_lm_cog_limits, ""),
+            ("DOI Limits File:", "lm_doi_limits_entry", self.browse_lm_doi_limits, ""),
+        ]
 
-        # LM Configuration file
-        ctk.CTkLabel(lm_settings_frame, text="System Energy cal file:").grid(
-            row=2, column=0, sticky="e", padx=5, pady=2
-        )
-        self.lm_encal_entry = ctk.CTkEntry(lm_settings_frame)
-        self.lm_encal_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkButton(
-            lm_settings_frame, text="Browse", command=self.browse_lm_encal, width=100
-        ).grid(row=2, column=2, padx=5, pady=2)
-
-        # COG limits file
-        ctk.CTkLabel(lm_settings_frame, text="COG Limits File:").grid(
-            row=3, column=0, sticky="e", padx=5, pady=2
-        )
-        self.lm_cog_limits_entry = ctk.CTkEntry(lm_settings_frame)
-        self.lm_cog_limits_entry.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkButton(
-            lm_settings_frame,
-            text="Browse",
-            command=self.browse_lm_cog_limits,
-            width=100,
-        ).grid(row=3, column=2, padx=5, pady=2)
-
-        # DOI limits file
-        ctk.CTkLabel(lm_settings_frame, text="DOI Limits File:").grid(
-            row=4, column=0, sticky="e", padx=5, pady=2
-        )
-        self.lm_doi_limits_entry = ctk.CTkEntry(lm_settings_frame)
-        self.lm_doi_limits_entry.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkButton(
-            lm_settings_frame,
-            text="Browse",
-            command=self.browse_lm_doi_limits,
-            width=100,
-        ).grid(row=4, column=2, padx=5, pady=2)
+        for i, (label, attr, cmd, default) in enumerate(fields, 1):
+            ctk.CTkLabel(lm_settings_frame, text=label).grid(
+                row=i, column=0, sticky="e", padx=5, pady=2
+            )
+            entry = ctk.CTkEntry(lm_settings_frame)
+            entry.grid(row=i, column=1, padx=5, pady=2, sticky="ew")
+            if default:
+                entry.insert(0, default)
+            setattr(self, attr, entry)
+            ctk.CTkButton(
+                lm_settings_frame, text="Browse", command=cmd, width=100
+            ).grid(row=i, column=2, padx=5, pady=2)
 
         # Generate button
-        generate_frame = ctk.CTkFrame(self.lm_generation_tab, fg_color="transparent")
-        generate_frame.pack(padx=10, pady=10)
-
+        gen_btn_frame = ctk.CTkFrame(self.lm_generation_tab, fg_color="transparent")
+        gen_btn_frame.pack(padx=10, pady=10)
         self.generate_lm_button = ctk.CTkButton(
-            generate_frame,
-            text="Generate LM File",
-            command=self.generate_lm_file,
+            gen_btn_frame, text="Generate LM File", command=self.generate_lm_file
         )
         self.generate_lm_button.pack(padx=5, pady=5)
 
@@ -475,8 +419,9 @@ class PETsysGUIApp:
 
             image_path = None
             for path in possible_paths:
-                if os.path.exists(path):
-                    image_path = path
+                p = Path(path)
+                if p.exists():
+                    image_path = p
                     break
 
             if image_path is None:
@@ -506,115 +451,92 @@ class PETsysGUIApp:
 
     # All the browse methods for file selection
     def browse_lm_input(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select LDAT Input File",
-            filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
+        self._browse(
+            self.lm_input_entry,
+            "Select LDAT Input File",
             initialdir="/data/nvmDisk/Cornell/data/",
+            filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
         )
-        if filename:
-            self.lm_input_entry.delete(0, tk.END)
-            self.lm_input_entry.insert(0, filename)
 
     def browse_lm_encal(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select Energy cal File",
-            filetypes=[("Encal Files", "*.encal"), ("All Files", "*.*")],
+        self._browse(
+            self.lm_encal_entry,
+            "Select Energy cal File",
             initialdir="/home/sie/sw/process_petsys/encal_files/",
+            filetypes=[("Encal Files", "*.encal"), ("All Files", "*.*")],
         )
-        if filename:
-            self.lm_encal_entry.delete(0, tk.END)
-            self.lm_encal_entry.insert(0, filename)
 
     def browse_lm_cog_limits(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select COG Limits File",
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+        self._browse(
+            self.lm_cog_limits_entry,
+            "Select COG Limits File",
             initialdir="/home/sie/sw/process_petsys/",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
         )
-        if filename:
-            self.lm_cog_limits_entry.delete(0, tk.END)
-            self.lm_cog_limits_entry.insert(0, filename)
 
     def browse_lm_doi_limits(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select DOI Limits File",
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+        self._browse(
+            self.lm_doi_limits_entry,
+            "Select DOI Limits File",
             initialdir="/home/sie/sw/process_petsys/",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
         )
-        if filename:
-            self.lm_doi_limits_entry.delete(0, tk.END)
-            self.lm_doi_limits_entry.insert(0, filename)
 
     def browse_rawf_file(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select Rawf File",
-            filetypes=[("Rawf Files", "*.rawf"), ("All Files", "*.*")],
+        self._browse(
+            self.proc_data_entry,
+            "Select Rawf File",
             initialdir=self.output_data_folder,
+            filetypes=[("Rawf Files", "*.rawf"), ("All Files", "*.*")],
         )
-        if filename:
-            self.proc_data_entry.delete(0, tk.END)
-            self.proc_data_entry.insert(0, filename)
 
     def browse_petsys_folder(self) -> None:
-        folder = filedialog.askdirectory(
-            title="Select PETsys Folder", initialdir="/home/sie/sw/", mustexist=True
+        self._browse(
+            self.petsys_entry,
+            "Select PETsys Folder",
+            mode="directory",
+            initialdir="/home/sie/sw/",
         )
-        if folder:
-            self.petsys_entry.delete(0, tk.END)
-            self.petsys_entry.insert(0, folder)
 
     def browse_output_folder(self) -> None:
-        folder = filedialog.askdirectory(
-            title="Select Output Data Folder",
+        self._browse(
+            self.output_entry,
+            "Select Output Data Folder",
+            mode="directory",
             initialdir="/data/nvmDisk/Cornell/",
-            mustexist=True,
         )
-        if folder:
-            self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, folder)
 
     def browse_ldat_basename(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select Basename LDAT File",
-            filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
+        self._browse(
+            self.ldat_basename_entry,
+            "Select Basename LDAT File",
             initialdir=self.output_data_folder,
+            filetypes=[("LDAT Files", "*.ldat"), ("All Files", "*.*")],
         )
-        if filename:
-            self.ldat_basename_entry.delete(0, tk.END)
-            self.ldat_basename_entry.insert(0, filename)
 
     def browse_process_petsys_folder(self) -> None:
-        folder = filedialog.askdirectory(
-            title="Select Process PETSYS Folder",
+        self._browse(
+            self.process_petsys_entry,
+            "Select Process PETSYS Folder",
+            mode="directory",
             initialdir="/home/sie/sw/",
-            mustexist=True,
         )
-        if folder:
-            self.process_petsys_entry.delete(0, tk.END)
-            self.process_petsys_entry.insert(0, folder)
 
     def browse_process_config_file(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select Processing Config File",
-            filetypes=[
-                ("YAML Files", "*.yaml"),
-                ("All Files", "*.*"),
-            ],
+        self._browse(
+            self.process_config_entry,
+            "Select Processing Config File",
             initialdir="/home/sie/sw/process_petsys/configs/",
+            filetypes=[("YAML Files", "*.yaml"), ("All Files", "*.*")],
         )
-        if filename:
-            self.process_config_entry.delete(0, tk.END)
-            self.process_config_entry.insert(0, filename)
 
     def browse_config_file(self) -> None:
-        filename = filedialog.askopenfilename(
-            title="Select Config File",
-            filetypes=[("INI Files", "*.ini"), ("All Files", "*.*")],
+        self._browse(
+            self.config_entry,
+            "Select Config File",
             initialdir="/data/nvmDisk/Cornell/",
+            filetypes=[("INI Files", "*.ini"), ("All Files", "*.*")],
         )
-        if filename:
-            self.config_entry.delete(0, tk.END)
-            self.config_entry.insert(0, filename)
 
     # Remaining methods (existing functionality)
     def on_close(self) -> None:
@@ -681,35 +603,41 @@ class PETsysGUIApp:
     def run_command(
         self, command_line: str, callback: Optional[Callable] = None
     ) -> None:
-        self.log_message("Executing: " + command_line)
+        """Execute a shell command in a background thread and log the output."""
+        self.log_message(f"Executing: {command_line}")
         self.stop_button.configure(state="normal")
+        self.stop_requested = False
 
         def task():
             try:
-                self.stop_requested = False
                 process = subprocess.Popen(
                     command_line,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # Combine stdout and stderr
                     shell=True,
                     text=True,
                     preexec_fn=os.setsid if os.name != "nt" else None,
                 )
                 self.current_process = process
-                output, error = process.communicate()
-                full_output = output + "\n" + error
+
+                # Stream output line by line for real-time feedback
+                for line in iter(process.stdout.readline, ""):
+                    if line:
+                        self.root.after(
+                            0, lambda m=line.rstrip(): self.log_message(f"  {m}")
+                        )
+
+                process.wait()
+                return_code = process.returncode
+                self.log_message(f"Command finished with return code {return_code}")
+
             except Exception as e:
-                full_output = f"Error: {e}"
+                self.log_message(f"Execution Error: {e}")
             finally:
                 self.current_process = None
-
-            self.root.after(0, lambda: self.stop_button.configure(state="disabled"))
-            self.root.after(
-                0, lambda: self.output_text.insert(tk.END, full_output + "\n")
-            )
-            self.root.after(0, lambda: self.output_text.see(tk.END))
-            if callback:
-                self.root.after(0, callback)
+                self.root.after(0, lambda: self.stop_button.configure(state="disabled"))
+                if callback:
+                    self.root.after(0, callback)
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -844,29 +772,26 @@ class PETsysGUIApp:
             base_file_path: The base path of the converted files (without extension)
         """
         try:
-            # Get the base filename from the full path
-            base_name = os.path.basename(base_file_path)
+            folder = Path(output_folder)
+            base_name = Path(base_file_path).name
 
             # Delete .lidx files matching the pattern
-            lidx_pattern = os.path.join(output_folder, base_name + "*.lidx")
-            lidx_files = glob.glob(lidx_pattern)
-            for lidx_file in lidx_files:
+            for lidx_file in folder.glob(f"{base_name}*.lidx"):
                 try:
-                    os.remove(lidx_file)
+                    lidx_file.unlink()
                     self.log_message(f"Deleted: {lidx_file}")
                 except Exception as e:
                     self.log_message(f"Warning: Could not delete {lidx_file}: {e}")
 
             # Delete the empty 0000.ldat file if it exists
-            ldat_0000_pattern = os.path.join(output_folder, base_name + "*00000.ldat")
-            ldat_0000_matches = glob.glob(ldat_0000_pattern)
-            ldat_0000 = ldat_0000_matches[0] if ldat_0000_matches else None
-            if ldat_0000 and os.path.exists(ldat_0000):
-                try:
-                    os.remove(ldat_0000)
-                    self.log_message(f"Deleted empty LDAT file: {ldat_0000}")
-                except Exception as e:
-                    self.log_message(f"Warning: Could not delete {ldat_0000}: {e}")
+            ldat_0000_files = list(folder.glob(f"{base_name}*00000.ldat"))
+            if ldat_0000_files:
+                for ldat_0000 in ldat_0000_files:
+                    try:
+                        ldat_0000.unlink()
+                        self.log_message(f"Deleted empty LDAT file: {ldat_0000}")
+                    except Exception as e:
+                        self.log_message(f"Warning: Could not delete {ldat_0000}: {e}")
             else:
                 self.log_message("Note: Empty LDAT file not found")
 
@@ -888,8 +813,9 @@ class PETsysGUIApp:
                 "Please set PETsys Folder, Output Data Folder, and Config File."
             )
             return
-        file_full_path = os.path.join(
-            self.output_data_folder, self.acq_file_name + f"_{int(self.acq_time)}s"
+
+        file_full_path = Path(self.output_data_folder) / (
+            self.acq_file_name + f"_{int(self.acq_time)}s"
         )
 
         # HW trigger flag
@@ -909,24 +835,17 @@ class PETsysGUIApp:
                 "Please set PETsys Folder, Output Data Folder, and Config File."
             )
             return
-        file_full_path = os.path.join(
-            self.output_data_folder, self.proc_data_entry.get()
-        )
-        file_full_path = file_full_path.replace(".rawf", "")
 
-        # Read the acquisition time from the proc_data_entry which has
-        # the format of "rawf_file_basename_{acq_time}s"
+        file_full_path = Path(self.output_data_folder) / self.proc_data_entry.get()
+        file_full_path = file_full_path.with_suffix("")  # Remove .rawf if present
+
+        # Read the acquisition time from the proc_data_entry
         try:
-            acq_time_str = file_full_path.split("_")[-1].replace("s", "")
-            acq_time_str = int(acq_time_str)
-        except ValueError:
+            acq_time_str = file_full_path.name.split("_")[-1].replace("s", "")
+            acq_time_v = int(acq_time_str)
+        except (ValueError, IndexError):
             self.log_message(
-                "Error: Unable to extract acquisition time from the file name."
-            )
-            return
-        except IndexError:
-            self.log_message(
-                "Error: File name format is incorrect. Expected format: rawf_file_basename_{acq_time}s"
+                "Error: Unable to extract acquisition time or incorrect format. Expected: basename_{time}s"
             )
             return
 
@@ -956,32 +875,24 @@ class PETsysGUIApp:
                 "Please set PETsys Folder, Output Data Folder, and Config File."
             )
             return
-        file_full_path = os.path.join(
-            self.output_data_folder, self.proc_data_entry.get()
-        )
 
-        file_full_path = file_full_path.split(".")[0]
+        file_full_path = Path(self.output_data_folder) / self.proc_data_entry.get()
+        file_full_path = file_full_path.with_suffix("")
 
-        # Read the acquisition time from the proc_data_entry which has
-        # the format of "rawf_file_basename_{acq_time}s"
+        # Read the acquisition time from the proc_data_entry
         try:
-            acq_time_str = file_full_path.split("_")[-1].replace("s", "")
-            acq_time_str = int(acq_time_str)
-        except ValueError:
+            acq_time_str = file_full_path.name.split("_")[-1].replace("s", "")
+            acq_time_v = int(acq_time_str)
+        except (ValueError, IndexError):
             self.log_message(
-                f"Error: Unable to extract acquisition time from the file name. Current file name is {file_full_path}"
-            )
-            return
-        except IndexError:
-            self.log_message(
-                "Error: File name format is incorrect. Expected format: rawf_file_basename_(acq_time)s"
+                f"Error: Unable to extract acquisition time or incorrect format. File: {file_full_path}"
             )
             return
 
         # Calculate the split time if needed
         split_time_param = ""
         if self.split_files > 1:
-            split_time = acq_time_str / self.split_files + SPLIT_TIME_OFFSET
+            split_time = acq_time_v / self.split_files + SPLIT_TIME_OFFSET
             split_time_param = f"--splitTime {split_time} "
 
         command = (
@@ -1010,12 +921,14 @@ class PETsysGUIApp:
         if not input_file:
             self.log_message("Please select a Basename LDAT file.")
             return
-        # Get the folder and base name (remove extension and acquisition time part)
-        basename_folder = os.path.dirname(input_file)
-        base_name = os.path.basename(input_file).split(".")[0]
+
+        # Get the folder and base name
+        input_path = Path(input_file)
+        basename_folder = input_path.parent
+        base_name = input_path.stem
         base_name = "_".join(base_name.split("_")[0:-1])
-        pattern = os.path.join(basename_folder, base_name + "*.ldat")
-        ldat_files = glob.glob(pattern)
+
+        ldat_files = list(basename_folder.glob(base_name + "*.ldat"))
 
         encal_file = self.lm_encal_entry.get().strip()
         cog_limits_file = self.lm_cog_limits_entry.get().strip()
@@ -1024,6 +937,8 @@ class PETsysGUIApp:
         if not all([input_file, encal_file, cog_limits_file, doi_limits_file]):
             self.log_message("Please provide all required files for LM generation.")
             return
+
+        ldat_files_str = " ".join(str(f) for f in ldat_files)
 
         # Build the command using conda run -n for cleaner conda activation
         command = (
@@ -1048,16 +963,20 @@ class PETsysGUIApp:
         if not basename_file:
             self.log_message("Please select a Basename LDAT file.")
             return
-        # Get the folder and base name (remove extension and acquisition time part)
-        basename_folder = os.path.dirname(basename_file)
-        base_name = os.path.basename(basename_file).split(".")[0]
+
+        # Get the folder and base name
+        input_path = Path(basename_file)
+        basename_folder = input_path.parent
+        base_name = input_path.stem
         base_name = "_".join(base_name.split("_")[0:-1])
-        pattern = os.path.join(basename_folder, base_name + "*.ldat")
-        ldat_files = glob.glob(pattern)
+
+        ldat_files = list(basename_folder.glob(base_name + "*.ldat"))
         cog_limits_file = self.lm_cog_limits_entry.get().strip()
 
         if not ldat_files:
-            self.log_message(f"No LDAT files found matching pattern '{pattern}'.")
+            self.log_message(
+                f"No LDAT files found for base '{base_name}' in {basename_folder}."
+            )
             return
 
         if not cog_limits_file:
@@ -1118,7 +1037,7 @@ class PETsysGUIApp:
 
         # Create pipeline directory if it doesn't exist
         try:
-            os.makedirs(PIPELINE_DATA_DIR, exist_ok=True)
+            Path(PIPELINE_DATA_DIR).mkdir(parents=True, exist_ok=True)
         except Exception as e:
             self.log_message(f"[ERROR] Could not create pipeline directory: {e}")
             return
@@ -1247,7 +1166,7 @@ class PETsysGUIApp:
         ldat_file = (
             self.acq_file_name + f"_{int(self.acq_time)}s_coincFixed_00000001.ldat"
         )
-        ldat_path = os.path.join(PIPELINE_DATA_DIR, ldat_file)
+        ldat_path = Path(PIPELINE_DATA_DIR) / ldat_file
 
         self.ldat_basename_entry.delete(0, tk.END)
         self.ldat_basename_entry.insert(0, ldat_path)
@@ -1294,18 +1213,18 @@ class PETsysGUIApp:
         ldat_file = (
             self.acq_file_name + f"_{int(self.acq_time)}s_coincFixed_00000001.ldat"
         )
-        ldat_path = os.path.join(PIPELINE_DATA_DIR, ldat_file)
+        ldat_path = Path(PIPELINE_DATA_DIR) / ldat_file
 
         self.lm_input_entry.delete(0, tk.END)
-        self.lm_input_entry.insert(0, ldat_path)
+        self.lm_input_entry.insert(0, str(ldat_path))
 
         # Set encal file dynamically based on acq_file_name
-        encal_file = os.path.join(
-            PIPELINE_ENCAL_DIR,
-            f"{self.acq_file_name}_{int(self.acq_time)}s_coincFixed_position_5regions.encal",
+        encal_file = (
+            Path(PIPELINE_ENCAL_DIR)
+            / f"{self.acq_file_name}_{int(self.acq_time)}s_coincFixed_position_5regions.encal"
         )
         self.lm_encal_entry.delete(0, tk.END)
-        self.lm_encal_entry.insert(0, encal_file)
+        self.lm_encal_entry.insert(0, str(encal_file))
 
         # Set cog limits file
         self.lm_cog_limits_entry.delete(0, tk.END)
