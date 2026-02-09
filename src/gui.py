@@ -65,6 +65,7 @@ class PETsysGUIApp:
             ("RAWF to LDAT Conversion", "rawf_to_ldat_tab"),
             ("LDAT Processing", "ldat_proc_tab"),
             ("LM File Generation", "lm_generation_tab"),
+            ("System Quality Control", "qc_tab"),
         ]
 
         for label, attr in tabs:
@@ -75,6 +76,7 @@ class PETsysGUIApp:
         self.setup_rawf_to_ldat_tab()
         self.setup_ldat_proc_tab()
         self.setup_lm_generation_tab()
+        self.setup_qc_tab()
 
         # Output Log area at bottom
         self.output_frame = ctk.CTkFrame(self.root)
@@ -110,6 +112,12 @@ class PETsysGUIApp:
         self.lm_doi_limits_file: str = ""
         self.current_process: Optional[subprocess.Popen] = None
         self.stop_requested: bool = False
+
+        # QC tab variables
+        self.qc_with_source: bool = True
+        self.qc_enable_plots: bool = False
+        self.qc_enable_slabs: bool = False
+        self.qc_acquisition_running: bool = False
 
     def create_labeled_frame(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
         """Create a frame with a bold title label at the top."""
@@ -375,6 +383,362 @@ class PETsysGUIApp:
             frame, text="Create Energy cal file", command=self.generate_energy_cal_file
         )
         self.process_ldat_button.grid(row=2, column=0, columnspan=3, padx=20, pady=10)
+
+    def setup_qc_tab(self) -> None:
+        """Setup the System Quality Control tab."""
+        # Acquisition Settings Frame
+        acq_settings_frame = self.create_labeled_frame(
+            self.qc_tab, "Acquisition Settings"
+        )
+        acq_settings_frame.pack(padx=10, pady=5, fill="x")
+        acq_settings_frame.grid_columnconfigure(1, weight=1)
+
+        # Source selection
+        ctk.CTkLabel(acq_settings_frame, text="Acquisition Mode:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=5
+        )
+
+        source_frame = ctk.CTkFrame(acq_settings_frame, fg_color="transparent")
+        source_frame.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+
+        self.qc_source_var = tk.StringVar(value="with")
+        self.qc_with_radio = ctk.CTkRadioButton(
+            source_frame,
+            text="With Source (1 min)",
+            variable=self.qc_source_var,
+            value="with",
+        )
+        self.qc_with_radio.pack(side="left", padx=5)
+
+        self.qc_without_radio = ctk.CTkRadioButton(
+            source_frame,
+            text="Without Source (3 min)",
+            variable=self.qc_source_var,
+            value="without",
+        )
+        self.qc_without_radio.pack(side="left", padx=5)
+
+        # Validation Options Frame
+        validation_frame = self.create_labeled_frame(self.qc_tab, "Validation Options")
+        validation_frame.pack(padx=10, pady=5, fill="x")
+        validation_frame.grid_columnconfigure(1, weight=1)
+
+        # Enable plots checkbox
+        self.qc_plots_var = tk.BooleanVar(value=False)
+        self.qc_plots_check = ctk.CTkCheckBox(
+            validation_frame,
+            text="Generate Plots ( no slab analysis, takes ~5 min )",
+            variable=self.qc_plots_var,
+            command=self.on_qc_plots_toggle,
+        )
+        self.qc_plots_check.grid(row=1, column=0, sticky="w", padx=20, pady=5)
+
+        # Enable slabs checkbox (dependent on plots)
+        self.qc_slabs_var = tk.BooleanVar(value=False)
+        self.qc_slabs_check = ctk.CTkCheckBox(
+            validation_frame,
+            text="Enable Slab Analysis (requires plots, takes ~30 min)",
+            variable=self.qc_slabs_var,
+            state="disabled",
+        )
+        self.qc_slabs_check.grid(row=2, column=0, sticky="w", padx=40, pady=5)
+
+        # Control Buttons Frame
+        control_frame = self.create_labeled_frame(
+            self.qc_tab, "Quality Control Execution"
+        )
+        control_frame.pack(padx=10, pady=10, fill="x")
+        control_frame.grid_columnconfigure(0, weight=1)
+
+        self.qc_run_button = ctk.CTkButton(
+            control_frame,
+            text="Run Quality Control",
+            command=self.run_quality_control,
+            width=200,
+            height=40,
+            fg_color="#2ecc71",
+            hover_color="#27ae60",
+            state="disabled",
+        )
+        self.qc_run_button.grid(row=1, column=0, pady=5)
+
+        self.qc_stop_button = ctk.CTkButton(
+            control_frame,
+            text="STOP",
+            command=self.stop_quality_control,
+            width=200,
+            height=40,
+            fg_color="#e74c3c",
+            hover_color="#c0392b",
+            state="disabled",
+        )
+        self.qc_stop_button.grid(row=2, column=0, pady=5)
+
+        # Status Frame
+        status_frame = self.create_labeled_frame(self.qc_tab, "Status")
+        status_frame.pack(padx=10, pady=5, fill="both", expand=True)
+        status_frame.grid_columnconfigure(0, weight=1)
+
+        self.qc_status_label = ctk.CTkLabel(
+            status_frame, text="Ready to run quality control", font=ctk.CTkFont(size=12)
+        )
+        self.qc_status_label.grid(row=1, column=0, pady=10)
+
+    def on_qc_plots_toggle(self) -> None:
+        """Enable/disable slab checkbox based on plots checkbox."""
+        if self.qc_plots_var.get():
+            self.qc_slabs_check.configure(state="normal")
+        else:
+            self.qc_slabs_check.configure(state="disabled")
+            self.qc_slabs_var.set(False)
+
+    def run_quality_control(self) -> None:
+        """Execute the quality control workflow."""
+        # Validate required fields
+        if not all(
+            [
+                self.petsys_folder,
+                self.output_data_folder,
+                self.config_file,
+                self.process_petsys_folder,
+                self.process_config_file,
+            ]
+        ):
+            self.log_message(
+                "ERROR: Please configure all required fields in 'System Setup & Acquisition' tab first."
+            )
+            messagebox.showerror(
+                "Configuration Error",
+                "Please fill in all required fields:\n"
+                "- PETsys Folder\n"
+                "- Output Data Folder\n"
+                "- Config File\n"
+                "- process_petsys Folder\n"
+                "- YAML Config File",
+            )
+            return
+
+        if not self.system_initialized:
+            self.log_message(
+                "ERROR: System not initialized. Please initialize the system first."
+            )
+            messagebox.showerror(
+                "Initialization Error",
+                "Please initialize the system in 'System Setup & Acquisition' tab first.",
+            )
+            return
+
+        # Disable run button, enable stop button
+        self.qc_run_button.configure(state="disabled")
+        self.qc_stop_button.configure(state="normal")
+        self.qc_acquisition_running = True
+
+        # Determine acquisition time based on source selection
+        acq_time = 60 if self.qc_source_var.get() == "with" else 180
+        source_text = (
+            "with source" if self.qc_source_var.get() == "with" else "without source"
+        )
+
+        self.log_message(f"\n{'='*60}")
+        self.log_message(f"Starting Quality Control - {source_text} ({acq_time}s)")
+        self.log_message(f"{'='*60}\n")
+
+        self.qc_status_label.configure(text=f"Acquiring data ({acq_time}s)...")
+
+        # Start acquisition in background thread
+        def qc_acquisition_task():
+            try:
+                # Acquire data
+                qc_filename = f"qc_{self.qc_source_var.get()}_source_{int(time.time())}"
+                acquire_cmd = (
+                    f"cd {self.petsys_folder} && "
+                    f"./acquire_sipm_data -c {self.config_file} "
+                    f"--time {acq_time} "
+                    f"-o {self.output_data_folder}/{qc_filename} --writeBinary"
+                )
+
+                self.log_message(f"Executing acquisition: {acquire_cmd}")
+
+                process = subprocess.Popen(
+                    acquire_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    shell=True,
+                    text=True,
+                    preexec_fn=os.setsid if os.name != "nt" else None,
+                )
+                self.current_process = process
+
+                # Stream output
+                for line in iter(process.stdout.readline, ""):
+                    if line:
+                        self.root.after(
+                            0, lambda m=line.rstrip(): self.log_message(f"  {m}")
+                        )
+                    if not self.qc_acquisition_running:
+                        break
+
+                process.wait()
+
+                if not self.qc_acquisition_running:
+                    self.root.after(
+                        0, lambda: self.log_message("Quality control stopped by user.")
+                    )
+                    return
+
+                if process.returncode != 0:
+                    self.root.after(
+                        0,
+                        lambda: self.log_message(
+                            f"ERROR: Acquisition failed with return code {process.returncode}"
+                        ),
+                    )
+                    return
+
+                self.root.after(
+                    0, lambda: self.log_message("Acquisition completed successfully.")
+                )
+                self.root.after(
+                    0,
+                    lambda: self.qc_status_label.configure(
+                        text="Running validation..."
+                    ),
+                )
+
+                # Run validation
+                self.root.after(0, lambda: self.run_system_validation(qc_filename))
+
+            except Exception as e:
+                self.root.after(
+                    0, lambda: self.log_message(f"ERROR during acquisition: {e}")
+                )
+            finally:
+                self.current_process = None
+
+        threading.Thread(target=qc_acquisition_task, daemon=True).start()
+
+    def run_system_validation(self, qc_filename: str) -> None:
+        """Run the cornell_system_validation.py script."""
+        try:
+            # Build command
+            plots_flag = "--plots" if self.qc_plots_var.get() else ""
+            slabs_flag = (
+                "--slabs" if self.qc_slabs_var.get() and self.qc_plots_var.get() else ""
+            )
+
+            ldat_files = f"{self.output_data_folder}/{qc_filename}*.ldat"
+
+            validation_cmd = (
+                f"cd {self.process_petsys_folder} && "
+                f"conda run -n process_petsys "
+                f"python scripts_cornell/cornell_system_validation.py "
+                f"{self.process_config_file} "
+                f"{ldat_files} "
+                f"{plots_flag} {slabs_flag}"
+            )
+
+            self.log_message(f"\nExecuting validation: {validation_cmd}\n")
+
+            def validation_task():
+                try:
+                    process = subprocess.Popen(
+                        validation_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        shell=True,
+                        text=True,
+                        preexec_fn=os.setsid if os.name != "nt" else None,
+                    )
+                    self.current_process = process
+
+                    # Stream output
+                    for line in iter(process.stdout.readline, ""):
+                        if line:
+                            self.root.after(
+                                0, lambda m=line.rstrip(): self.log_message(f"  {m}")
+                            )
+                        if not self.qc_acquisition_running:
+                            break
+
+                    process.wait()
+
+                    if not self.qc_acquisition_running:
+                        return
+
+                    if process.returncode == 0:
+                        self.root.after(
+                            0,
+                            lambda: self.log_message(
+                                "\nQuality control completed successfully!"
+                            ),
+                        )
+                        self.root.after(
+                            0,
+                            lambda: self.qc_status_label.configure(
+                                text="Quality control completed successfully!"
+                            ),
+                        )
+                        # Find and log the output directory
+                        self.root.after(
+                            0,
+                            lambda: self.log_message(
+                                f"Results saved in: {self.process_petsys_folder}/system_verifications/"
+                            ),
+                        )
+                    else:
+                        self.root.after(
+                            0,
+                            lambda: self.log_message(
+                                f"ERROR: Validation failed with return code {process.returncode}"
+                            ),
+                        )
+                        self.root.after(
+                            0,
+                            lambda: self.qc_status_label.configure(
+                                text="Quality control failed. Check logs."
+                            ),
+                        )
+
+                except Exception as e:
+                    self.root.after(
+                        0, lambda: self.log_message(f"ERROR during validation: {e}")
+                    )
+                finally:
+                    self.current_process = None
+                    self.root.after(
+                        0, lambda: self.qc_run_button.configure(state="normal")
+                    )
+                    self.root.after(
+                        0, lambda: self.qc_stop_button.configure(state="disabled")
+                    )
+                    self.qc_acquisition_running = False
+
+            threading.Thread(target=validation_task, daemon=True).start()
+
+        except Exception as e:
+            self.log_message(f"ERROR setting up validation: {e}")
+            self.qc_run_button.configure(state="normal")
+            self.qc_stop_button.configure(state="disabled")
+            self.qc_acquisition_running = False
+
+    def stop_quality_control(self) -> None:
+        """Stop the currently running quality control process."""
+        self.qc_acquisition_running = False
+
+        if self.current_process:
+            try:
+                if os.name != "nt":
+                    os.killpg(os.getpgid(self.current_process.pid), signal.SIGTERM)
+                else:
+                    self.current_process.terminate()
+                self.log_message("Quality control process terminated.")
+            except Exception as e:
+                self.log_message(f"Error stopping process: {e}")
+
+        self.qc_run_button.configure(state="normal")
+        self.qc_stop_button.configure(state="disabled")
+        self.qc_status_label.configure(text="Quality control stopped.")
+        self.current_process = None
 
     def setup_lm_generation_tab(self) -> None:
         lm_settings_frame = self.create_labeled_frame(
@@ -1351,6 +1715,7 @@ class PETsysGUIApp:
         self.system_initialized = True
         self.acquire_button.configure(state="normal")
         self.pipeline_button.configure(state="normal")
+        self.qc_run_button.configure(state="normal")
 
         # Show recommendation message
         recommendation = "[RECOMMENDATION] Wait at least 5 minutes before acquiring data for system stabilization"
