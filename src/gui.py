@@ -49,7 +49,7 @@ class PETsysGUIApp:
 
         self.root = root
         self.root.title("MAGUI Cornell - PETsys Manager - LM file converter")
-        self.root.geometry("900x900")
+        self.root.geometry("900x950")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.initialize_variables()
@@ -601,12 +601,73 @@ class PETsysGUIApp:
                 self.root.after(
                     0,
                     lambda: self.qc_status_label.configure(
+                        text="Converting RAW to LDAT..."
+                    ),
+                )
+
+                # Convert RAW to LDAT (same as RAWF to LDAT tab)
+                raw_base_path = Path(self.output_data_folder) / qc_filename
+                split_time_param = ""
+                if self.split_files > 1:
+                    split_time = acq_time / self.split_files + SPLIT_TIME_OFFSET
+                    split_time_param = f"--splitTime {split_time} "
+
+                convert_cmd = (
+                    f"cd {self.petsys_folder} && "
+                    f"./convert_raw_to_coincidence_fixed --config {self.config_file} "
+                    f"-i {raw_base_path} -o {raw_base_path}_coincCompact "
+                    f"--writeBinaryCompact --writeMultipleHits 16 {split_time_param}"
+                )
+
+                self.log_message(f"Executing conversion: {convert_cmd}")
+
+                convert_process = subprocess.Popen(
+                    convert_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    shell=True,
+                    text=True,
+                    preexec_fn=os.setsid if os.name != "nt" else None,
+                )
+                self.current_process = convert_process
+
+                for line in iter(convert_process.stdout.readline, ""):
+                    if line:
+                        self.root.after(
+                            0, lambda m=line.rstrip(): self.log_message(f"  {m}")
+                        )
+                    if not self.qc_acquisition_running:
+                        break
+
+                convert_process.wait()
+
+                if not self.qc_acquisition_running:
+                    return
+
+                if convert_process.returncode != 0:
+                    self.root.after(
+                        0,
+                        lambda: self.log_message(
+                            f"ERROR: Conversion failed with return code {convert_process.returncode}"
+                        ),
+                    )
+                    return
+
+                self.cleanup_conversion_files(
+                    self.output_data_folder, f"{raw_base_path}_coincCompact"
+                )
+
+                self.root.after(
+                    0,
+                    lambda: self.qc_status_label.configure(
                         text="Running validation..."
                     ),
                 )
 
-                # Run validation
-                self.root.after(0, lambda: self.run_system_validation(qc_filename))
+                # Run validation using converted LDATs
+                self.root.after(
+                    0, lambda: self.run_system_validation(f"{qc_filename}_coincCompact")
+                )
 
             except Exception as e:
                 self.root.after(
@@ -617,7 +678,7 @@ class PETsysGUIApp:
 
         threading.Thread(target=qc_acquisition_task, daemon=True).start()
 
-    def run_system_validation(self, qc_filename: str) -> None:
+    def run_system_validation(self, ldat_basename: str) -> None:
         """Run the cornell_system_validation.py script."""
         try:
             # Build command
@@ -626,7 +687,7 @@ class PETsysGUIApp:
                 "--slabs" if self.qc_slabs_var.get() and self.qc_plots_var.get() else ""
             )
 
-            ldat_files = f"{self.output_data_folder}/{qc_filename}*.ldat"
+            ldat_files = f"{self.output_data_folder}/{ldat_basename}*.ldat"
 
             validation_cmd = (
                 f"cd {self.process_petsys_folder} && "
