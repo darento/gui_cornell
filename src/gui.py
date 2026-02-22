@@ -550,11 +550,12 @@ class PETsysGUIApp:
             try:
                 # Acquire data
                 qc_filename = f"qc_{self.qc_source_var.get()}_source_{int(time.time())}"
-                acquire_cmd = (
-                    f"cd {self.petsys_folder} && "
-                    f"./acquire_sipm_data -c {self.config_file} "
-                    f"--time {acq_time} "
-                    f"-o {self.output_data_folder}/{qc_filename} --writeBinary"
+                acquire_cmd = self._build_acquire_command(
+                    Path(self.output_data_folder) / qc_filename,
+                    acq_time,
+                    config_flag="--config",
+                    mode="qdc",
+                    enable_hw_trigger=True,
                 )
 
                 self.log_message(f"Executing acquisition: {acquire_cmd}")
@@ -1258,6 +1259,25 @@ class PETsysGUIApp:
         except Exception as e:
             self.log_message(f"Error during cleanup: {e}")
 
+    def _build_acquire_command(
+        self,
+        output_path: Path,
+        acq_time: int,
+        *,
+        config_flag: str = "--config",
+        mode: Optional[str] = "qdc",
+        enable_hw_trigger: bool = True,
+    ) -> str:
+        hwtrg_flag = (
+            "--enable-hw-trigger" if enable_hw_trigger and self.hw_trigger.get() else ""
+        )
+        mode_flag = f"--mode {mode}" if mode else ""
+        return (
+            f"cd {self.petsys_folder} && "
+            f"./acquire_sipm_data {config_flag} {self.config_file} "
+            f"-o {output_path} --time {acq_time} {mode_flag} {hwtrg_flag}"
+        ).strip()
+
     def acquire_data(self) -> None:
         self.update_settings()
 
@@ -1278,13 +1298,12 @@ class PETsysGUIApp:
             self.acq_file_name + f"_{int(self.acq_time)}s"
         )
 
-        # HW trigger flag
-        hwtrg_flag = "--enable-hw-trigger" if self.hw_trigger.get() else ""
-
-        command = (
-            f"cd {self.petsys_folder} && "
-            f"./acquire_sipm_data --config {self.config_file} -o {file_full_path} "
-            f"--time {self.acq_time} --mode qdc {hwtrg_flag}"
+        command = self._build_acquire_command(
+            file_full_path,
+            self.acq_time,
+            config_flag="--config",
+            mode="qdc",
+            enable_hw_trigger=True,
         )
         self.run_command(command)
 
