@@ -21,8 +21,8 @@ MAX_SPLIT_FILES: int = max(1, os.cpu_count() - 2)
 # Pipeline configuration constants
 PIPELINE_DATA_DIR: str = "/data/nvmDisk/Cornell/data/FullPipeline"
 PIPELINE_ENCAL_DIR: str = "/home/sie/sw/process_petsys/encal_files"
-PIPELINE_COG_LIMITS_FILE: str = "/home/sie/sw/process_petsys/cog_limits.txt"
-PIPELINE_DOI_LIMITS_FILE: str = "/home/sie/sw/process_petsys/doi_limits.txt"
+PIPELINE_COG_LIMITS_FILE: str = "/home/sie/sw/process_petsys/cog_limits_full_system.txt"
+PIPELINE_DOI_LIMITS_FILE: str = "/home/sie/sw/process_petsys/doi_limits_full_system.txt"
 
 
 def clean_tmp_and_shm() -> None:
@@ -1147,7 +1147,7 @@ class PETsysGUIApp:
             return
 
         # Prefix with stdbuf -oL for line buffering.
-        command = f"stdbuf -oL {self.petsys_folder}/daqd --socket-name /tmp/d.sock --daq-type PFP_KX7 --card /dev/psdaq0 --card /dev/psdaq1"
+        command = f"stdbuf -oL {self.petsys_folder}/daqd --socket-name /tmp/d.sock --daq-type PFP_KX7 --card /dev/psdaq1 --card /dev/psdaq0"
         self.log_daqd("Starting DAQD with command: " + command)
         try:
             process = subprocess.Popen(
@@ -1331,7 +1331,7 @@ class PETsysGUIApp:
         # Calculate the split time if needed
         split_time_param = ""
         if self.split_files > 1:
-            split_time = acq_time_str / self.split_files + SPLIT_TIME_OFFSET
+            split_time = acq_time_v / self.split_files + SPLIT_TIME_OFFSET
             split_time_param = f"--splitTime {split_time} "
 
         command = (
@@ -1342,7 +1342,7 @@ class PETsysGUIApp:
 
         def cleanup_callback():
             self.cleanup_conversion_files(
-                self.output_data_folder, file_full_path + "_coincFixed"
+                self.output_data_folder, str(file_full_path) + "_coincFixed"
             )
 
         self.run_command(command, callback=cleanup_callback)
@@ -1382,7 +1382,7 @@ class PETsysGUIApp:
 
         def cleanup_callback():
             self.cleanup_conversion_files(
-                self.output_data_folder, file_full_path + "_groupFixed"
+                self.output_data_folder, str(file_full_path) + "_groupFixed"
             )
 
         self.run_command(command, callback=cleanup_callback)
@@ -1417,14 +1417,19 @@ class PETsysGUIApp:
             self.log_message("Please provide all required files for LM generation.")
             return
 
+        # Log the LDAT files being used
+        self.log_message(f"Found {len(ldat_files)} LDAT files for processing")
+        for f in ldat_files:
+            self.log_message(f"  - {f}")
+
         ldat_files_str = " ".join(str(f) for f in ldat_files)
 
-        # Build the command using conda run -n for cleaner conda activation
+        # Build the command - script expects: [-d] [-c <path>] YAMLCONF SLAB_EN_MAP COG_LIMITS DOI_LIMITS INFILES...
         command = (
             f"cd {self.process_petsys_folder} && "
             f"conda run -n process_petsys "
             f"python {self.process_petsys_folder}/scripts_gui/cornell_listmode_cog_fixed_position.py "
-            f"{self.process_config_file} {encal_file} {cog_limits_file} {doi_limits_file} {' '.join(ldat_files)}"
+            f"-d {self.process_config_file} {encal_file} {cog_limits_file} {doi_limits_file} {ldat_files_str}"
         )
 
         self.log_message("Generating LM file...")
@@ -1467,12 +1472,14 @@ class PETsysGUIApp:
         for f in ldat_files:
             self.log_message(f"Found LDAT file: {f}")
 
+        ldat_files_str = " ".join(str(f) for f in ldat_files)
+
         # Build the command using conda run -n for cleaner conda activation
         command = (
             f"cd {self.process_petsys_folder} && "
             f"conda run -n process_petsys "
             f"python {self.process_petsys_folder}/scripts_gui/cornell_slab_en_cal_fixed_position.py "
-            f"{self.process_config_file} {cog_limits_file} {' '.join(ldat_files)} --coinc"
+            f"{self.process_config_file} {cog_limits_file} {ldat_files_str} --coinc"
         )
         self.log_message("Generating Energy cal file...")
         self.run_command(
