@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import threading
@@ -16,13 +17,22 @@ ctk.set_default_color_theme("dark-blue")
 ctk.DrawEngine.preferred_drawing_method = "polygon_shapes"
 
 SPLIT_TIME_OFFSET: float = 0.1
-MAX_SPLIT_FILES: int = max(1, os.cpu_count() - 2)
+MAX_SPLIT_FILES: int = max(8, os.cpu_count() - 10)
 
 # Pipeline configuration constants
 PIPELINE_DATA_DIR: str = "/data/nvmDisk/Cornell/data/FullPipeline"
 PIPELINE_ENCAL_DIR: str = "/home/sie/sw/process_petsys/encal_files"
 PIPELINE_COG_LIMITS_FILE: str = "/home/sie/sw/process_petsys/cog_limits_full_system.txt"
 PIPELINE_DOI_LIMITS_FILE: str = "/home/sie/sw/process_petsys/doi_limits_full_system.txt"
+
+# Acquisition safety parameters
+ACQ_EARLY_GROWTH_CHECK_SECONDS: float = 20.0
+ACQ_EARLY_GROWTH_CHECK_INTERVAL: float = 5.0
+ACQ_EARLY_GROWTH_MIN_BYTES: int = 20_000_000
+ACQ_EARLY_GROWTH_START_TIMEOUT: float = 45.0
+ACQ_MAX_LOSS_PERCENT: float = 5.0
+ACQ_MAX_RETRIES: int = 3
+ACQ_RETRY_WAIT: float = 2.0
 
 
 def clean_tmp_and_shm() -> None:
@@ -113,11 +123,35 @@ class PETsysGUIApp:
         self.current_process: Optional[subprocess.Popen] = None
         self.stop_requested: bool = False
 
+        # Acquisition safety variables
+        self.acquiring: bool = False
+        self.acquisition_attempt: int = 0
+        self.last_command_output: str = ""
+        self.acquisition_monitor_thread: Optional[threading.Thread] = None
+        self.acquisition_aborted: bool = False
+        self.qc_success_callback: Optional[Callable] = None
+        self.qc_failure_callback: Optional[Callable] = None
+
         # QC tab variables
         self.qc_with_source: bool = True
         self.qc_enable_plots: bool = False
         self.qc_enable_slabs: bool = False
         self.qc_acquisition_running: bool = False
+
+    def _build_conda_command(
+        self, command: str, env_name: str = "process_petsys"
+    ) -> str:
+        """Build a conda command with proper initialization.
+
+        Args:
+            command: The command to run in the conda environment
+            env_name: The conda environment name (default: process_petsys)
+
+        Returns:
+            A complete command string with conda initialization
+        """
+        conda_init_script = "/home/sie/miniconda3/etc/profile.d/conda.sh"
+        return f"source {conda_init_script} && conda run -n {env_name} {command}"
 
     def create_labeled_frame(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
         """Create a frame with a bold title label at the top."""
@@ -494,6 +528,8 @@ class PETsysGUIApp:
 
     def run_quality_control(self) -> None:
         """Execute the quality control workflow."""
+        self.update_settings()
+
         # Validate required fields
         if not all(
             [
@@ -545,77 +581,62 @@ class PETsysGUIApp:
 
         self.qc_status_label.configure(text=f"Acquiring data ({acq_time}s)...")
 
-        # Start acquisition in background thread
-        def qc_acquisition_task():
+        # Generate QC filename
+        qc_filename = f"qc_{self.qc_source_var.get()}_source"
+
+        # Define what to do after successful acquisition
+        def on_acquisition_success():
+            if not self.qc_acquisition_running:
+                self.log_message("Quality control stopped by user.")
+                self.qc_success_callback = None
+                self.qc_failure_callback = None
+                return
+
+            self.log_message("[OK] QC Acquisition completed successfully.")
+            self.qc_status_label.configure(text="Converting RAW to LDAT...")
+
+            # Continue with conversion and validation
+            self._qc_continue_with_conversion(qc_filename, acq_time)
+
+        def on_acquisition_failure():
+            self.log_message("[FAILED] QC Acquisition failed after all retries.")
+            self.qc_run_button.configure(state="normal")
+            self.qc_stop_button.configure(state="disabled")
+            self.qc_acquisition_running = False
+            self.qc_status_label.configure(text="Quality control failed.")
+            # Clear callbacks
+            self.qc_success_callback = None
+            self.qc_failure_callback = None
+
+        # Use the common monitored acquisition method
+        # Store callbacks for QC retries
+        self.qc_success_callback = on_acquisition_success
+        self.qc_failure_callback = on_acquisition_failure
+
+        self._start_monitored_acquisition(
+            filename=qc_filename,
+            acq_time=acq_time,
+            on_success=on_acquisition_success,
+            on_failure=on_acquisition_failure,
+            is_qc=True,
+        )
+
+    def _qc_continue_with_conversion(self, qc_filename: str, acq_time: float) -> None:
+        """Continue QC workflow with conversion after successful acquisition."""
+
+        def conversion_task():
             try:
-                # Acquire data
-                qc_filename = f"qc_{self.qc_source_var.get()}_source_{int(time.time())}"
-                acquire_cmd = self._build_acquire_command(
-                    Path(self.output_data_folder) / qc_filename,
-                    acq_time,
-                    config_flag="--config",
-                    mode="qdc",
-                    enable_hw_trigger=True,
-                )
-
-                self.log_message(f"Executing acquisition: {acquire_cmd}")
-
-                process = subprocess.Popen(
-                    acquire_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    shell=True,
-                    text=True,
-                    preexec_fn=os.setsid if os.name != "nt" else None,
-                )
-                self.current_process = process
-
-                # Stream output
-                for line in iter(process.stdout.readline, ""):
-                    if line:
-                        self.root.after(
-                            0, lambda m=line.rstrip(): self.log_message(f"  {m}")
-                        )
-                    if not self.qc_acquisition_running:
-                        break
-
-                process.wait()
-
                 if not self.qc_acquisition_running:
-                    self.root.after(
-                        0, lambda: self.log_message("Quality control stopped by user.")
-                    )
                     return
 
-                if process.returncode != 0:
-                    self.root.after(
-                        0,
-                        lambda: self.log_message(
-                            f"ERROR: Acquisition failed with return code {process.returncode}"
-                        ),
-                    )
-                    return
-
-                self.root.after(
-                    0, lambda: self.log_message("Acquisition completed successfully.")
-                )
-                self.root.after(
-                    0,
-                    lambda: self.qc_status_label.configure(
-                        text="Converting RAW to LDAT..."
-                    ),
-                )
-
-                # Convert RAW to LDAT (same as RAWF to LDAT tab)
+                # Convert RAW to LDAT
                 raw_base_path = Path(self.output_data_folder) / qc_filename
-                split_time_param = ""
-                if self.split_files > 1:
-                    split_time = acq_time / self.split_files + SPLIT_TIME_OFFSET
-                    split_time_param = f"--splitTime {split_time} "
+                split_time = acq_time / MAX_SPLIT_FILES + SPLIT_TIME_OFFSET
+                split_time_param = f"--splitTime {split_time} "
 
                 convert_cmd = (
                     f"cd {self.petsys_folder} && "
-                    f"./convert_raw_to_coincidence_fixed --config {self.config_file} "
+                    f"./convert_raw_to_coincidence --config {self.config_file} "
                     f"-i {raw_base_path} -o {raw_base_path}_coincCompact "
                     f"--writeBinaryCompact --writeMultipleHits 16 {split_time_param}"
                 )
@@ -672,12 +693,17 @@ class PETsysGUIApp:
 
             except Exception as e:
                 self.root.after(
-                    0, lambda: self.log_message(f"ERROR during acquisition: {e}")
+                    0, lambda: self.log_message(f"ERROR during conversion: {e}")
                 )
+                self.root.after(0, lambda: self.qc_run_button.configure(state="normal"))
+                self.root.after(
+                    0, lambda: self.qc_stop_button.configure(state="disabled")
+                )
+                self.qc_acquisition_running = False
             finally:
                 self.current_process = None
 
-        threading.Thread(target=qc_acquisition_task, daemon=True).start()
+        threading.Thread(target=conversion_task, daemon=True).start()
 
     def run_system_validation(self, ldat_basename: str) -> None:
         """Run the cornell_system_validation.py script."""
@@ -692,11 +718,12 @@ class PETsysGUIApp:
 
             validation_cmd = (
                 f"cd {self.process_petsys_folder} && "
-                f"conda run -n process_petsys "
-                f"python scripts_cornell/cornell_system_validation.py "
-                f"{self.process_config_file} "
-                f"{ldat_files} "
-                f"{plots_flag} {slabs_flag}"
+                + self._build_conda_command(
+                    f"python scripts_cornell/cornell_system_validation.py "
+                    f"{self.process_config_file} "
+                    f"{ldat_files} "
+                    f"{plots_flag} {slabs_flag}"
+                )
             )
 
             self.log_message(f"\nExecuting validation: {validation_cmd}\n")
@@ -708,6 +735,7 @@ class PETsysGUIApp:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         shell=True,
+                        executable="/bin/bash" if os.name != "nt" else None,
                         text=True,
                         preexec_fn=os.setsid if os.name != "nt" else None,
                     )
@@ -786,6 +814,7 @@ class PETsysGUIApp:
     def stop_quality_control(self) -> None:
         """Stop the currently running quality control process."""
         self.qc_acquisition_running = False
+        self.acquisition_aborted = True  # Signal monitoring thread to stop
 
         if self.current_process:
             try:
@@ -801,6 +830,10 @@ class PETsysGUIApp:
         self.qc_stop_button.configure(state="disabled")
         self.qc_status_label.configure(text="Quality control stopped.")
         self.current_process = None
+
+        # Clear QC callbacks
+        self.qc_success_callback = None
+        self.qc_failure_callback = None
 
     def setup_lm_generation_tab(self) -> None:
         lm_settings_frame = self.create_labeled_frame(
@@ -1068,6 +1101,7 @@ class PETsysGUIApp:
         self.log_message(f"Executing: {command_line}")
         self.stop_button.configure(state="normal")
         self.stop_requested = False
+        self.last_command_output = ""  # Reset output capture
 
         def task():
             try:
@@ -1076,20 +1110,24 @@ class PETsysGUIApp:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,  # Combine stdout and stderr
                     shell=True,
+                    executable="/bin/bash" if os.name != "nt" else None,
                     text=True,
                     preexec_fn=os.setsid if os.name != "nt" else None,
                 )
                 self.current_process = process
 
                 # Stream output line by line for real-time feedback
+                output_lines = []
                 for line in iter(process.stdout.readline, ""):
                     if line:
+                        output_lines.append(line)
                         self.root.after(
                             0, lambda m=line.rstrip(): self.log_message(f"  {m}")
                         )
 
                 process.wait()
                 return_code = process.returncode
+                self.last_command_output = "".join(output_lines)
                 self.log_message(f"Command finished with return code {return_code}")
 
             except Exception as e:
@@ -1197,6 +1235,10 @@ class PETsysGUIApp:
         self.stop_requested = True
         self.log_message("[STOP] Stop requested by user.")
 
+        # Stop acquisition if running
+        if self.acquiring:
+            self.stop_acquisition()
+
         if self.current_process and self.current_process.poll() is None:
             try:
                 if os.name != "nt":
@@ -1214,6 +1256,7 @@ class PETsysGUIApp:
         self.pipeline_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.acquire_button.configure(state="normal")
+        self.acquire_button.configure(text="Acquire Data")
 
     def log_daqd(self, message: str) -> None:
         def append():
@@ -1279,6 +1322,12 @@ class PETsysGUIApp:
         ).strip()
 
     def acquire_data(self) -> None:
+        """Initiate or stop data acquisition with safety checks and retry logic."""
+        # If already acquiring, stop it
+        if self.acquiring:
+            self.stop_acquisition()
+            return
+
         self.update_settings()
 
         # Check if DAQD is running
@@ -1294,18 +1343,402 @@ class PETsysGUIApp:
             )
             return
 
-        file_full_path = Path(self.output_data_folder) / (
-            self.acq_file_name + f"_{int(self.acq_time)}s"
+        # Validate acquisition time
+        try:
+            acq_time_v = float(self.acq_time)
+        except ValueError:
+            self.log_message("Invalid acquisition time.")
+            return
+
+        if acq_time_v <= 0:
+            self.log_message("Acquisition time must be greater than 0.")
+            return
+
+        # Start acquisition with retry logic
+        self.acquiring = True
+        self.acquisition_aborted = False
+        self.acquire_button.configure(text="Stop Acq")
+        self._acquire_data_with_retry(acq_time_v, attempt=1)
+
+    def stop_acquisition(self) -> None:
+        """Stop the current acquisition and any retries."""
+        self.log_message("[STOP] Stopping acquisition...")
+        self.acquiring = False
+        self.acquisition_aborted = True
+
+        # Stop the current process if running
+        if self.current_process and self.current_process.poll() is None:
+            try:
+                if os.name != "nt":
+                    os.killpg(os.getpgid(self.current_process.pid), signal.SIGTERM)
+                else:
+                    self.current_process.terminate()
+                self.log_message("[STOP] Acquisition process terminated.")
+            except Exception as e:
+                self.log_message(f"[STOP] Error terminating process: {e}")
+
+        # Reset button
+        self.acquire_button.configure(text="Acquire Data")
+        self.log_message("[STOP] Acquisition stopped by user.")
+
+    def _start_monitored_acquisition(
+        self,
+        filename: str,
+        acq_time: float,
+        on_success: Optional[Callable] = None,
+        on_failure: Optional[Callable] = None,
+        is_qc: bool = False,
+    ) -> None:
+        """Start a monitored acquisition with retry logic (used by both main and QC tabs).
+
+        Args:
+            filename: Name of the file to save (without path)
+            acq_time: Acquisition time in seconds
+            on_success: Callback to call on successful acquisition
+            on_failure: Callback to call on failed acquisition (after all retries)
+            is_qc: True if this is a QC acquisition, False for main tab acquisition
+        """
+        self._acquire_with_retry(
+            filename=filename,
+            acq_time=acq_time,
+            attempt=1,
+            on_success=on_success,
+            on_failure=on_failure,
+            is_qc=is_qc,
         )
 
+    def _acquire_data_with_retry(self, acq_time_v: float, attempt: int) -> None:
+        """Internal method to handle acquisition with retry logic (main tab)."""
+        file_name = self.acq_file_name + f"_{int(acq_time_v)}s"
+
+        def on_success():
+            self.log_message(
+                f"[OK] Acquisition completed successfully (attempt {self.acquisition_attempt}/{ACQ_MAX_RETRIES})"
+            )
+            self.acquiring = False
+            self.acquire_button.configure(text="Acquire Data")
+
+        def on_failure():
+            self.log_message(
+                f"[FAILED] Acquisition failed after {ACQ_MAX_RETRIES} attempts. "
+                "Please check hardware and try again."
+            )
+            self.acquiring = False
+            self.acquire_button.configure(text="Acquire Data")
+
+        # Call the common monitored acquisition
+        self._start_monitored_acquisition(
+            filename=file_name,
+            acq_time=acq_time_v,
+            on_success=on_success,
+            on_failure=on_failure,
+            is_qc=False,
+        )
+
+    def _acquire_with_retry(
+        self,
+        filename: str,
+        acq_time: float,
+        attempt: int,
+        on_success: Optional[Callable],
+        on_failure: Optional[Callable],
+        is_qc: bool,
+    ) -> None:
+        """Core acquisition retry logic used by both main and QC tabs."""
+        # Check if we should continue (different for main vs QC)
+        if is_qc and not self.qc_acquisition_running:
+            return
+        if not is_qc and not self.acquiring:
+            return
+
+        if attempt > ACQ_MAX_RETRIES:
+            if on_failure:
+                self.root.after(0, on_failure)
+            return
+
+        if attempt > 1:
+            self.log_message(f"[RETRY] Retry attempt {attempt} of {ACQ_MAX_RETRIES}...")
+            time.sleep(ACQ_RETRY_WAIT)
+
+        self.acquisition_attempt = attempt
+        context = "QC" if is_qc else "Main"
+        self.log_message(
+            f"Starting {context} acquisition (attempt {attempt}/{ACQ_MAX_RETRIES})..."
+        )
+
+        # Build output file path
+        file_full_path = Path(self.output_data_folder) / filename
+        rawf_path = Path(str(file_full_path) + ".rawf")
+
+        # Clean up any stale files from previous attempts
+        for suffix in (".rawf", ".idxf", ".tmpf", ".modf"):
+            stale_file = Path(str(file_full_path) + suffix)
+            if stale_file.exists():
+                self.log_message(f"Removing stale file: {stale_file.name}")
+                try:
+                    stale_file.unlink()
+                except Exception as e:
+                    self.log_message(
+                        f"Warning: Could not remove {stale_file.name}: {e}"
+                    )
+
+        # Build command
         command = self._build_acquire_command(
             file_full_path,
-            self.acq_time,
+            acq_time,
             config_flag="--config",
             mode="qdc",
             enable_hw_trigger=True,
         )
-        self.run_command(command)
+
+        # Create callback for handling acquisition completion
+        def completion_callback():
+            self._handle_acquisition_complete_common(
+                filename, acq_time, attempt, rawf_path, on_success, on_failure, is_qc
+            )
+
+        # Start monitoring in a separate thread
+        self.acquisition_aborted = False
+        self.acquisition_monitor_thread = threading.Thread(
+            target=self._monitor_acquisition_growth_common,
+            args=(
+                rawf_path,
+                filename,
+                acq_time,
+                attempt,
+                on_success,
+                on_failure,
+                is_qc,
+            ),
+            daemon=True,
+        )
+        self.acquisition_monitor_thread.start()
+
+        # Run the command
+        self.run_command(command, callback=completion_callback)
+
+    def _monitor_acquisition_growth_common(
+        self,
+        rawf_path: Path,
+        filename: str,
+        acq_time: float,
+        attempt: int,
+        on_success: Optional[Callable],
+        on_failure: Optional[Callable],
+        is_qc: bool,
+    ) -> None:
+        """Monitor .rawf file growth during acquisition to detect stalled acquisitions."""
+        start_time = time.monotonic()
+        growth_window_start = None
+        first_size = None
+
+        self.log_message(
+            f"[MONITOR] Monitoring acquisition: check_window={ACQ_EARLY_GROWTH_CHECK_SECONDS}s, "
+            f"min_growth={ACQ_EARLY_GROWTH_MIN_BYTES} bytes, "
+            f"startup_timeout={ACQ_EARLY_GROWTH_START_TIMEOUT}s"
+        )
+
+        # Check appropriate flag based on context
+        def should_continue():
+            if is_qc:
+                return self.qc_acquisition_running and not self.acquisition_aborted
+            else:
+                return self.acquiring and not self.acquisition_aborted
+
+        while should_continue():
+            now = time.monotonic()
+            elapsed = now - start_time
+
+            # Check if file exists and has data
+            if rawf_path.exists():
+                try:
+                    current_size = rawf_path.stat().st_size
+
+                    if first_size is None and current_size > 0:
+                        first_size = current_size
+                        growth_window_start = now
+                        self.log_message(
+                            f"[OK] .rawf file started writing (initial size: {current_size:,} bytes)"
+                        )
+                except Exception as e:
+                    self.log_message(f"Warning: Could not check file size: {e}")
+
+            # Check startup timeout
+            if (
+                growth_window_start is None
+                and ACQ_EARLY_GROWTH_START_TIMEOUT > 0
+                and elapsed >= ACQ_EARLY_GROWTH_START_TIMEOUT
+            ):
+                self.log_message(
+                    f"[WARNING] Early abort: .rawf did not start writing data within "
+                    f"{ACQ_EARLY_GROWTH_START_TIMEOUT:.1f}s"
+                )
+                self._abort_and_retry_acquisition_common(
+                    filename,
+                    acq_time,
+                    attempt,
+                    "startup_timeout",
+                    on_success,
+                    on_failure,
+                    is_qc,
+                )
+                return
+
+            # Check growth window
+            if (
+                growth_window_start is not None
+                and (now - growth_window_start) >= ACQ_EARLY_GROWTH_CHECK_SECONDS
+            ):
+                try:
+                    current_size = rawf_path.stat().st_size if rawf_path.exists() else 0
+                    growth = current_size - (first_size or 0)
+
+                    if growth < ACQ_EARLY_GROWTH_MIN_BYTES:
+                        self.log_message(
+                            f"[WARNING] Early abort: .rawf growth below threshold after "
+                            f"{ACQ_EARLY_GROWTH_CHECK_SECONDS:.1f}s from file start "
+                            f"(growth={growth:,} bytes, required>={ACQ_EARLY_GROWTH_MIN_BYTES:,})"
+                        )
+                        self._abort_and_retry_acquisition_common(
+                            filename,
+                            acq_time,
+                            attempt,
+                            "insufficient_growth",
+                            on_success,
+                            on_failure,
+                            is_qc,
+                        )
+                        return
+                    else:
+                        self.log_message(
+                            f"[OK] Growth check passed: {growth:,} bytes in "
+                            f"{ACQ_EARLY_GROWTH_CHECK_SECONDS:.1f}s from file start"
+                        )
+                        # Growth check passed, stop monitoring
+                        return
+                except Exception as e:
+                    self.log_message(f"Warning: Error during growth check: {e}")
+
+            time.sleep(ACQ_EARLY_GROWTH_CHECK_INTERVAL)
+
+    def _abort_and_retry_acquisition_common(
+        self,
+        filename: str,
+        acq_time: float,
+        attempt: int,
+        reason: str,
+        on_success: Optional[Callable],
+        on_failure: Optional[Callable],
+        is_qc: bool,
+    ) -> None:
+        """Abort current acquisition and schedule retry."""
+        self.acquisition_aborted = True
+        self.log_message(f"Aborting acquisition due to: {reason}")
+
+        # Stop the current acquisition process
+        if self.current_process and self.current_process.poll() is None:
+            try:
+                if os.name != "nt":
+                    os.killpg(os.getpgid(self.current_process.pid), signal.SIGTERM)
+                else:
+                    self.current_process.terminate()
+                self.log_message("Acquisition process terminated.")
+            except Exception as e:
+                self.log_message(f"Warning: Error terminating process: {e}")
+
+        # Wait a moment for cleanup, then schedule retry
+        def schedule_retry():
+            time.sleep(1.0)
+            # Check if we should retry based on context
+            should_retry = self.qc_acquisition_running if is_qc else self.acquiring
+            if should_retry:
+                # Get the appropriate callbacks for retry
+                retry_on_success = self.qc_success_callback if is_qc else on_success
+                retry_on_failure = self.qc_failure_callback if is_qc else on_failure
+
+                self.root.after(
+                    int(ACQ_RETRY_WAIT * 1000),
+                    lambda: self._acquire_with_retry(
+                        filename,
+                        acq_time,
+                        attempt + 1,
+                        retry_on_success,
+                        retry_on_failure,
+                        is_qc,
+                    ),
+                )
+
+        threading.Thread(target=schedule_retry, daemon=True).start()
+
+    def _handle_acquisition_complete_common(
+        self,
+        filename: str,
+        acq_time: float,
+        attempt: int,
+        rawf_path: Path,
+        on_success: Optional[Callable],
+        on_failure: Optional[Callable],
+        is_qc: bool,
+    ) -> None:
+        """Handle completion of acquisition command and check for frame loss."""
+        # If acquisition was aborted by the monitor, don't process completion
+        if self.acquisition_aborted:
+            return
+
+        # Check if output contains loss percentage info
+        loss_percent_pattern = re.compile(
+            r"all events were lost for\s+\d+\s+\(\s*([0-9]+(?:\.[0-9]+)?)\s*%\)\s+frames",
+            re.IGNORECASE,
+        )
+
+        # Parse the command output
+        loss_match = loss_percent_pattern.search(self.last_command_output)
+
+        if loss_match:
+            loss_percent = float(loss_match.group(1))
+            if loss_percent > ACQ_MAX_LOSS_PERCENT:
+                self.log_message(
+                    f"[WARNING] Frame loss {loss_percent:.3f}% exceeds threshold "
+                    f"({ACQ_MAX_LOSS_PERCENT}%)"
+                )
+                # Retry the acquisition
+                if is_qc:
+                    # Don't reset qc_acquisition_running, just retry
+                    retry_on_success = self.qc_success_callback
+                    retry_on_failure = self.qc_failure_callback
+                else:
+                    retry_on_success = on_success
+                    retry_on_failure = on_failure
+
+                self.root.after(
+                    int(ACQ_RETRY_WAIT * 1000),
+                    lambda: self._acquire_with_retry(
+                        filename,
+                        acq_time,
+                        attempt + 1,
+                        retry_on_success,
+                        retry_on_failure,
+                        is_qc,
+                    ),
+                )
+                return
+            else:
+                self.log_message(
+                    f"[OK] Frame loss {loss_percent:.3f}% within acceptable range "
+                    f"(<= {ACQ_MAX_LOSS_PERCENT}%)"
+                )
+
+        # Acquisition successful
+        if on_success:
+            on_success()
+        else:
+            # Default behavior for main tab
+            self.log_message(
+                f"[OK] Acquisition completed successfully (attempt {attempt}/{ACQ_MAX_RETRIES})"
+            )
+            if not is_qc:
+                self.acquiring = False
+                self.acquire_button.configure(text="Acquire Data")
 
     def convert_raw_to_coincidence(self) -> None:
         self.update_settings()
@@ -1336,7 +1769,7 @@ class PETsysGUIApp:
 
         command = (
             f"cd {self.petsys_folder} && "
-            f"./convert_raw_to_coincidence_fixed --config {self.config_file} -i {file_full_path} "
+            f"./convert_raw_to_coincidence --config {self.config_file} -i {file_full_path} "
             f"-o {file_full_path}_coincFixed --writeBinaryFixed --writeMultipleHits 16 {split_time_param}"
         )
 
@@ -1376,7 +1809,7 @@ class PETsysGUIApp:
 
         command = (
             f"cd {self.petsys_folder} && "
-            f"./convert_raw_to_group_fixed --config {self.config_file} -i {file_full_path} "
+            f"./convert_raw_to_group --config {self.config_file} -i {file_full_path} "
             f"-o {file_full_path}_groupFixed --writeBinaryFixed --writeMultipleHits 16 {split_time_param}"
         )
 
@@ -1425,9 +1858,7 @@ class PETsysGUIApp:
         ldat_files_str = " ".join(str(f) for f in ldat_files)
 
         # Build the command - script expects: [-d] [-c <path>] YAMLCONF SLAB_EN_MAP COG_LIMITS DOI_LIMITS INFILES...
-        command = (
-            f"cd {self.process_petsys_folder} && "
-            f"conda run -n process_petsys "
+        command = f"cd {self.process_petsys_folder} && " + self._build_conda_command(
             f"python {self.process_petsys_folder}/scripts_gui/cornell_listmode_cog_fixed_position.py "
             f"-d {self.process_config_file} {encal_file} {cog_limits_file} {doi_limits_file} {ldat_files_str}"
         )
@@ -1475,9 +1906,7 @@ class PETsysGUIApp:
         ldat_files_str = " ".join(str(f) for f in ldat_files)
 
         # Build the command using conda run -n for cleaner conda activation
-        command = (
-            f"cd {self.process_petsys_folder} && "
-            f"conda run -n process_petsys "
+        command = f"cd {self.process_petsys_folder} && " + self._build_conda_command(
             f"python {self.process_petsys_folder}/scripts_gui/cornell_slab_en_cal_fixed_position.py "
             f"{self.process_config_file} {cog_limits_file} {ldat_files_str} --coinc"
         )
@@ -1565,36 +1994,40 @@ class PETsysGUIApp:
         self.output_entry.delete(0, tk.END)
         self.output_entry.insert(0, PIPELINE_DATA_DIR)
 
-        # Store original run_command
-        original_run_command = self.run_command
+        # Step 1 completion handlers
+        def on_pipeline_acquisition_success() -> None:
+            if self.stop_requested:
+                self.log_message("[STOP] Pipeline aborted after Step 1.")
+                return
+            self.log_message("[ACQ] Step 1 completed successfully.")
+            self._pipeline_step2_convert(original_output_folder)
 
-        def run_command_step1_with_step2(
-            command_line: str, callback: Optional[Callable] = None
-        ) -> None:
-            def combined_callback():
-                if callback:
-                    callback()
-                # Check for stop request before proceeding to step 2
-                if self.stop_requested:
-                    self.log_message("[STOP] Pipeline aborted after Step 1.")
-                    return
-                # Call step 2 immediately after acquisition completes
-                self._pipeline_step2_convert(original_output_folder)
+        def on_pipeline_acquisition_failure() -> None:
+            self.log_message(
+                f"[FAILED] Pipeline aborted: acquisition failed after {ACQ_MAX_RETRIES} attempts."
+            )
+            self.pipeline_status_label.configure(
+                text="[FAILED] Step 1 failed after retries. Pipeline stopped.",
+                text_color="red",
+            )
+            self.acquiring = False
+            self.acquire_button.configure(text="Acquire Data")
+            self.output_data_folder = original_output_folder
+            self.output_entry.delete(0, tk.END)
+            self.output_entry.insert(0, original_output_folder)
+            self.pipeline_button.configure(state="normal")
 
-            original_run_command(command_line, callback=combined_callback)
-
-        # Temporarily replace run_command for acquire_data
-        self.run_command = run_command_step1_with_step2
-        self.acquire_data()
-        # Restore original run_command
-        self.run_command = original_run_command
-
-        # Schedule step 2 after acquisition completes
-        # Wait for the acquisition to finish based on acquisition time
-        # self.root.after(
-        #     int((self.acq_time + 5) * 1000),
-        #     lambda: self._pipeline_step2_convert(original_output_folder),
-        # )
+        # Start monitored Step 1 acquisition and continue only on success
+        self.acquiring = True
+        self.acquisition_aborted = False
+        self.acquire_button.configure(text="Stop Acq")
+        self._start_monitored_acquisition(
+            filename=self.acq_file_name + f"_{int(self.acq_time)}s",
+            acq_time=float(self.acq_time),
+            on_success=on_pipeline_acquisition_success,
+            on_failure=on_pipeline_acquisition_failure,
+            is_qc=False,
+        )
 
     def _pipeline_step2_convert(self, original_output_folder: str) -> None:
         """Pipeline Step 2: Convert RAWF to LDAT"""
